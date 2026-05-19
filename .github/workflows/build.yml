@@ -1,0 +1,115 @@
+name: build
+
+on:
+  push:
+    branches: [main]
+    tags: ['release/*']
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 350
+    permissions:
+      contents: write
+
+    steps:
+      - name: Free disk space
+        uses: jlumbroso/free-disk-space@v1.3.1
+        with:
+          tool-cache: true
+          android: true
+          dotnet: true
+          haskell: true
+          large-packages: true
+          swap-storage: true
+
+      - uses: actions/checkout@v4
+
+      - name: Install host toolchain
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y clang lld ninja-build cmake ccache
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v3
+        with:
+          enable-cache: true
+
+      - name: Install Python deps
+        run: uv sync
+
+      - name: Clone LLVM
+        run: bash clone_llvm.sh
+
+      - name: Resolve LLVM commit
+        id: llvm
+        run: |
+          SHA=$(git -C thirdparty/llvm-project rev-parse HEAD)
+          echo "sha=$SHA" >> "$GITHUB_OUTPUT"
+          echo "short=${SHA:0:12}" >> "$GITHUB_OUTPUT"
+
+      - name: Restore ccache
+        uses: actions/cache@v4
+        with:
+          path: .ccache
+          key: ccache-${{ runner.os }}-${{ steps.llvm.outputs.sha }}
+          restore-keys: ccache-${{ runner.os }}-
+
+      - name: Patch LLVM
+        run: uv run python patch_llvm.py --llvm-repo thirdparty/llvm-project
+
+      - name: Build opt
+        env:
+          CCACHE_DIR: ${{ github.workspace }}/.ccache
+          LLVM_DIR: thirdparty/llvm-project
+          BUILD_DIR: build/llvm-rel
+          BUILD_TARGETS: opt
+        run: bash build_patched_llvm.sh
+
+      - name: ccache stats
+        if: always()
+        run: ccache -s || true
+
+      - name: Smoke test instrumented opt
+        run: |
+          set -e
+          cat > /tmp/smoke.ll <<'EOF'
+          define i32 @f(i32 %x) {
+            %a = add i32 %x, 0
+            ret i32 %a
+          }
+          EOF
+          rm -f llvm_fuzz_info.txt
+          build/llvm-rel/bin/opt -passes=instcombine /tmp/smoke.ll -S -o /dev/null
+          if [ ! -s llvm_fuzz_info.txt ]; then
+            echo "FAIL: llvm_fuzz_info.txt missing or empty"
+            ls -la llvm_fuzz_info.txt || true
+            exit 1
+          fi
+          if ! grep -q "SESSION START" llvm_fuzz_info.txt; then
+            echo "FAIL: no SESSION marker in trace"
+            cat llvm_fuzz_info.txt
+            exit 1
+          fi
+          if ! grep -qE "ITERATION|NEW INSTRUCTIONS|REPLACEMENTS" llvm_fuzz_info.txt; then
+            echo "FAIL: no trace records (instrumentation produced an empty session)"
+            cat llvm_fuzz_info.txt
+            exit 1
+          fi
+          echo "Smoke test passed; trace size: $(wc -c < llvm_fuzz_info.txt) bytes"
+          head -50 llvm_fuzz_info.txt
+
+      - name: Stage release asset
+        if: startsWith(github.ref, 'refs/tags/release/')
+        run: |
+          xz -9 -T0 -c build/llvm-rel/bin/opt > "opt-llvm-${{ steps.llvm.outputs.short }}.xz"
+          ls -lh "opt-llvm-${{ steps.llvm.outputs.short }}.xz"
+
+      - name: Upload to GitHub Release
+        if: startsWith(github.ref, 'refs/tags/release/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: opt-llvm-${{ steps.llvm.outputs.short }}.xz
+          fail_on_unmatched_files: true

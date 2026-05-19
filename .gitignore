@@ -1,0 +1,7 @@
+thirdparty/
+build/
+.ccache/
+.venv/
+__pycache__/
+*.pyc
+llvm_fuzz_info.txt

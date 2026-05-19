@@ -1,0 +1,12 @@
+[project]
+name = "instcombine-instrumentor"
+version = "0.1.0"
+description = "Patch and build an instrumented LLVM opt that traces InstCombine folds and RAUWs."
+requires-python = ">=3.10"
+dependencies = [
+    "tree-sitter==0.23.2",
+    "tree-sitter-cpp==0.23.4",
+]
+
+[tool.uv]
+package = false
