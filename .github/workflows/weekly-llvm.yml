@@ -62,7 +62,7 @@ jobs:
           CCACHE_DIR: ${{ github.workspace }}/.ccache
           LLVM_DIR: thirdparty/llvm-project
           BUILD_DIR: build/llvm-rel
-          BUILD_TARGETS: opt
+          BUILD_TARGETS: opt llvm-symbolizer
         run: bash build_patched_llvm.sh
 
       - name: ccache stats
@@ -76,6 +76,8 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: opt-llvm-${{ steps.llvm.outputs.short }}
-          path: build/llvm-rel/bin/opt
+          path: |
+            build/llvm-rel/bin/opt
+            build/llvm-rel/bin/llvm-symbolizer
           if-no-files-found: error
           retention-days: 14

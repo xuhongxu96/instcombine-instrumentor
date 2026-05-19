@@ -50,7 +50,7 @@ jobs:
           CCACHE_DIR: ${{ github.workspace }}/.ccache
           LLVM_DIR: thirdparty/llvm-project
           BUILD_DIR: build/llvm-rel
-          BUILD_TARGETS: opt
+          BUILD_TARGETS: opt llvm-symbolizer
         run: bash build_patched_llvm.sh
 
       - name: ccache stats
@@ -63,12 +63,14 @@ jobs:
       - name: Stage release asset
         if: startsWith(github.ref, 'refs/tags/release/')
         run: |
-          xz -9 -T0 -c build/llvm-rel/bin/opt > "opt-llvm-${{ steps.llvm.outputs.short }}.xz"
-          ls -lh "opt-llvm-${{ steps.llvm.outputs.short }}.xz"
+          ASSET="opt-llvm-${{ steps.llvm.outputs.short }}.tar.xz"
+          tar -C build/llvm-rel/bin -cf - opt llvm-symbolizer \
+            | xz -9 -T0 -c > "$ASSET"
+          ls -lh "$ASSET"
 
       - name: Upload to GitHub Release
         if: startsWith(github.ref, 'refs/tags/release/')
         uses: softprops/action-gh-release@v2
         with:
-          files: opt-llvm-${{ steps.llvm.outputs.short }}.xz
+          files: opt-llvm-${{ steps.llvm.outputs.short }}.tar.xz
           fail_on_unmatched_files: true

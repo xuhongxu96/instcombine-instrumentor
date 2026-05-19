@@ -2,8 +2,19 @@
 set -euo pipefail
 
 OPT_BIN=${OPT_BIN:-build/llvm-rel/bin/opt}
+SYMBOLIZER_BIN=${SYMBOLIZER_BIN:-$(dirname "$OPT_BIN")/llvm-symbolizer}
 TRACE_FILE=${TRACE_FILE:-llvm_fuzz_info.txt}
 SMOKE_IR=${SMOKE_IR:-$(mktemp --suffix=.ll)}
+
+# Picked up by LLVM's PrettyStackTrace / signal-handler symbolization,
+# and by the instrumentation when it dumps stack frames into TRACE_FILE.
+export LLVM_SYMBOLIZER_PATH="$SYMBOLIZER_BIN"
+
+if [ ! -x "$SYMBOLIZER_BIN" ]; then
+    echo "FAIL: $SYMBOLIZER_BIN not found or not executable"
+    exit 1
+fi
+"$SYMBOLIZER_BIN" --version
 
 cat > "$SMOKE_IR" <<'EOF'
 define i32 @f(i32 %x) {
@@ -27,6 +38,15 @@ if ! grep -q "SESSION START" "$TRACE_FILE"; then
 fi
 if ! grep -qE "ITERATION|NEW INSTRUCTIONS|REPLACEMENTS" "$TRACE_FILE"; then
     echo "FAIL: no trace records (instrumentation produced an empty session)"
+    cat "$TRACE_FILE"
+    exit 1
+fi
+# Symbolized frames carry demangled "llvm::" names; an unsymbolized
+# trace shows raw 0x... addresses or mangled _ZN4llvm... symbols, neither
+# of which contains the literal "llvm::".
+if ! grep -q "llvm::" "$TRACE_FILE"; then
+    echo "FAIL: instrumentation trace has no symbolized llvm:: frames"
+    echo "(LLVM_SYMBOLIZER_PATH=$LLVM_SYMBOLIZER_PATH was not honored, or symbolizer is broken)"
     cat "$TRACE_FILE"
     exit 1
 fi

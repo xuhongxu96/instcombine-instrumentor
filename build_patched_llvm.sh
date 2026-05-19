@@ -7,7 +7,7 @@ export LD=${LD:-lld}
 
 LLVM_DIR=${LLVM_DIR:-thirdparty/llvm-project}
 BUILD_DIR=${BUILD_DIR:-build/llvm-rel}
-BUILD_TARGETS=${BUILD_TARGETS:-opt}
+BUILD_TARGETS=${BUILD_TARGETS:-opt llvm-symbolizer}
 
 export CCACHE_DIR=${CCACHE_DIR:-$HOME/.cache/ccache}
 export CCACHE_BASEDIR=$(realpath "$LLVM_DIR")
