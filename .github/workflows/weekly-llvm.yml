@@ -1,18 +1,21 @@
-name: build
+name: weekly-llvm
 
 on:
-  push:
-    branches: [main]
-    tags: ['release/*']
-  pull_request:
+  schedule:
+    - cron: '0 6 * * 1'
   workflow_dispatch:
+    inputs:
+      llvm_ref:
+        description: 'LLVM ref to build (branch, tag, or commit SHA)'
+        required: false
+        default: 'main'
 
 jobs:
   build:
     runs-on: ubuntu-latest
     timeout-minutes: 350
     permissions:
-      contents: write
+      contents: read
 
     steps:
       - uses: actions/checkout@v4
@@ -27,6 +30,15 @@ jobs:
 
       - name: Install Python deps
         run: uv sync
+
+      - name: Select LLVM ref
+        id: ref
+        run: |
+          REF="${{ github.event.inputs.llvm_ref }}"
+          REF="${REF:-main}"
+          echo "ref=$REF" >> "$GITHUB_OUTPUT"
+          printf '%s\n' "$REF" > llvm_commit.txt
+          echo "Building LLVM ref: $REF"
 
       - name: Clone LLVM
         run: bash clone_llvm.sh
@@ -60,15 +72,10 @@ jobs:
       - name: Smoke test instrumented opt
         run: bash smoke_test.sh
 
-      - name: Stage release asset
-        if: startsWith(github.ref, 'refs/tags/release/')
-        run: |
-          xz -9 -T0 -c build/llvm-rel/bin/opt > "opt-llvm-${{ steps.llvm.outputs.short }}.xz"
-          ls -lh "opt-llvm-${{ steps.llvm.outputs.short }}.xz"
-
-      - name: Upload to GitHub Release
-        if: startsWith(github.ref, 'refs/tags/release/')
-        uses: softprops/action-gh-release@v2
+      - name: Upload opt artifact
+        uses: actions/upload-artifact@v4
         with:
-          files: opt-llvm-${{ steps.llvm.outputs.short }}.xz
-          fail_on_unmatched_files: true
+          name: opt-llvm-${{ steps.llvm.outputs.short }}
+          path: build/llvm-rel/bin/opt
+          if-no-files-found: error
+          retention-days: 14
