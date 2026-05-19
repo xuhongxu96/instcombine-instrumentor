@@ -41,11 +41,11 @@ if ! grep -qE "ITERATION|NEW INSTRUCTIONS|REPLACEMENTS" "$TRACE_FILE"; then
     cat "$TRACE_FILE"
     exit 1
 fi
-# Symbolized frames carry demangled "llvm::" names; an unsymbolized
+# Symbolized frames carry demangled "llvm::InstVisitor" names; an unsymbolized
 # trace shows raw 0x... addresses or mangled _ZN4llvm... symbols, neither
-# of which contains the literal "llvm::".
-if ! grep -q "llvm::" "$TRACE_FILE"; then
-    echo "FAIL: instrumentation trace has no symbolized llvm:: frames"
+# of which contains the literal "llvm::InstVisitor".
+if ! grep -q "llvm::InstVisitor" "$TRACE_FILE"; then
+    echo "FAIL: instrumentation trace has no symbolized llvm::InstVisitor frames"
     echo "(LLVM_SYMBOLIZER_PATH=$LLVM_SYMBOLIZER_PATH was not honored, or symbolizer is broken)"
     cat "$TRACE_FILE"
     exit 1
