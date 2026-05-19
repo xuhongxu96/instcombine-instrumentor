@@ -15,6 +15,7 @@ export CCACHE_BASEDIR=$(realpath "$LLVM_DIR")
 cmake -GNinja \
     -S "${LLVM_DIR}/llvm" \
     -B "${BUILD_DIR}" \
+    -DCMAKE_DISABLE_PRECOMPILE_HEADERS=ON \
     -DCMAKE_BUILD_TYPE=Release \
     -DLLVM_ENABLE_PROJECTS=clang \
     -DLLVM_TARGETS_TO_BUILD="X86;AArch64" \
