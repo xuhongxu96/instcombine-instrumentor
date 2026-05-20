@@ -27,6 +27,9 @@ permissions:
   contents: write
   actions: write
 
+env:
+  EMSDK_VERSION: 5.0.7
+
 jobs:
   build-wasm:
     runs-on: ubuntu-latest
@@ -55,8 +58,8 @@ jobs:
       - name: Set up emsdk
         uses: emscripten-core/setup-emsdk@v16
         with:
-          version: 5.0.7
-          actions-cache-folder: emsdk-cache-5.0.7
+          version: ${{ env.EMSDK_VERSION }}
+          actions-cache-folder: emsdk-cache-${{ env.EMSDK_VERSION }}
 
       - name: Cache host llvm-tblgen
         uses: actions/cache@v4
@@ -79,6 +82,7 @@ jobs:
       - name: Build wasm bundle
         env:
           CCACHE_DIR: ${{ github.workspace }}/.ccache
+          CCACHE_COMPILERCHECK: string:emsdk-${{ env.EMSDK_VERSION }}
         run: bash build_wasm.sh
 
       - name: ccache stats
