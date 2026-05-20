@@ -9,3 +9,6 @@ web/node_modules/
 web/dist/
 web/public/wasm/instcombine_driver.js
 web/public/wasm/instcombine_driver.wasm
+web/public/wasm/manifest.json
+web/public/wasm/release_*/
+web/public/wasm/_latest/

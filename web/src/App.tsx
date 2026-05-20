@@ -1,6 +1,11 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Editor } from "./components/Editor";
 import { TracePanel } from "./components/TracePanel";
+import {
+  releaseToSource,
+  type WasmManifest,
+  type WasmRelease,
+} from "./wasm/manifest";
 
 const DEFAULT_IR = `; paste LLVM IR here, then press Run.
 define i32 @f(i32 %x) {
@@ -9,20 +14,125 @@ define i32 @f(i32 %x) {
 }
 `;
 
-type RunState =
-  | { kind: "idle" }
-  | { kind: "loading" }
-  | { kind: "running" }
-  | { kind: "done"; bytes: number }
-  | { kind: "error"; message: string };
+const STORAGE_KEY = "wasmVersion";
+
+type WasmState =
+  | { kind: "loadingManifest" }
+  | { kind: "manifestError"; message: string }
+  | { kind: "noVersions" }
+  | { kind: "loadingVersion"; tag: string }
+  | { kind: "ready"; tag: string }
+  | { kind: "running"; tag: string }
+  | { kind: "loadError"; tag: string; message: string }
+  | { kind: "runError"; tag: string; message: string }
+  | { kind: "done"; tag: string; bytes: number };
+
+function getBaseUrl(): string {
+  const base = (import.meta as ImportMeta & { env?: { BASE_URL?: string } }).env?.BASE_URL ?? "/";
+  return base.endsWith("/") ? base : base + "/";
+}
+
+// Fallback manifest used when `wasm/manifest.json` is missing (typically `npm run dev`
+// before the manifest builder has run). Points at whatever `build_wasm.sh` last copied
+// into `web/public/wasm/`.
+function fallbackManifest(): WasmManifest {
+  const now = new Date().toISOString();
+  const entry: WasmRelease = {
+    tag: "(local build)",
+    name: "(local build)",
+    slug: "_local",
+    publishedAt: now,
+    prerelease: false,
+    bundled: true,
+    jsAsset: "instcombine_driver.js",
+    wasmAsset: "instcombine_driver.wasm",
+  };
+  return { generatedAt: now, defaultTag: entry.tag, releases: [entry] };
+}
+
+function pickInitialTag(manifest: WasmManifest): string | null {
+  if (manifest.releases.length === 0) return null;
+  const stored = typeof localStorage !== "undefined" ? localStorage.getItem(STORAGE_KEY) : null;
+  if (stored && manifest.releases.some((r) => r.tag === stored)) return stored;
+  if (manifest.defaultTag && manifest.releases.some((r) => r.tag === manifest.defaultTag)) {
+    return manifest.defaultTag;
+  }
+  return manifest.releases[0].tag;
+}
+
+function formatLabel(r: WasmRelease): string {
+  const base = r.name || r.tag;
+  const suffix = r.bundled ? "" : " (on demand)";
+  const pre = r.prerelease ? " · pre-release" : "";
+  return `${base}${pre}${suffix}`;
+}
 
 export function App() {
   const [ir, setIr] = useState(DEFAULT_IR);
   const [trace, setTrace] = useState("");
-  const [state, setState] = useState<RunState>({ kind: "idle" });
+  const [manifest, setManifest] = useState<WasmManifest | null>(null);
+  const [selectedTag, setSelectedTag] = useState<string | null>(null);
+  const [state, setState] = useState<WasmState>({ kind: "loadingManifest" });
   const [wordWrap, setWordWrap] = useState(true);
   const workerRef = useRef<Worker | null>(null);
+  const workerReadyRef = useRef(false);
+  const pendingLoadRef = useRef<string | null>(null);
 
+  const releaseByTag = useMemo(() => {
+    const map = new Map<string, WasmRelease>();
+    if (manifest) for (const r of manifest.releases) map.set(r.tag, r);
+    return map;
+  }, [manifest]);
+
+  const requestLoad = useCallback((tag: string) => {
+    const worker = workerRef.current;
+    const release = releaseByTag.get(tag);
+    if (!worker || !release) return;
+    if (!workerReadyRef.current) {
+      pendingLoadRef.current = tag;
+      return;
+    }
+    const source = releaseToSource(release, getBaseUrl());
+    setState({ kind: "loadingVersion", tag });
+    worker.postMessage({ type: "loadVersion", id: tag, source });
+  }, [releaseByTag]);
+
+  // Fetch the manifest once on mount.
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch(`${getBaseUrl()}wasm/manifest.json`, { cache: "no-cache" });
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const m = (await res.json()) as WasmManifest;
+        if (cancelled) return;
+        const initial = pickInitialTag(m);
+        setManifest(m);
+        if (initial) {
+          setSelectedTag(initial);
+          setState({ kind: "loadingVersion", tag: initial });
+        } else {
+          setState({ kind: "noVersions" });
+        }
+      } catch {
+        if (cancelled) return;
+        // No manifest on disk — fall back to whatever build_wasm.sh dropped at the
+        // legacy path. Lets `npm run dev` work without running the manifest builder.
+        const m = fallbackManifest();
+        const initial = pickInitialTag(m);
+        setManifest(m);
+        if (initial) {
+          setSelectedTag(initial);
+          setState({ kind: "loadingVersion", tag: initial });
+        } else {
+          setState({ kind: "noVersions" });
+        }
+      }
+    })();
+    return () => { cancelled = true; };
+  }, []);
+
+  // Spawn worker once.
   useEffect(() => {
     const worker = new Worker(
       new URL("./worker/instcombine.worker.ts", import.meta.url),
@@ -30,33 +140,91 @@ export function App() {
     );
     worker.onmessage = (e: MessageEvent) => {
       const msg = e.data;
-      if (msg.type === "ready") setState({ kind: "idle" });
-      else if (msg.type === "done") {
+      if (msg.type === "ready") {
+        workerReadyRef.current = true;
+        const pending = pendingLoadRef.current;
+        if (pending) {
+          pendingLoadRef.current = null;
+          requestLoad(pending);
+        }
+        return;
+      }
+      if (msg.type === "loaded") {
+        setState({ kind: "ready", tag: msg.id });
+        return;
+      }
+      if (msg.type === "loadError") {
+        setState({ kind: "loadError", tag: msg.id, message: msg.message });
+        return;
+      }
+      if (msg.type === "done") {
         setTrace(msg.trace);
-        setState({ kind: "done", bytes: msg.trace.length });
-      } else if (msg.type === "error") {
-        setState({ kind: "error", message: msg.message });
+        setState((prev) =>
+          "tag" in prev
+            ? { kind: "done", tag: prev.tag, bytes: msg.trace.length }
+            : prev,
+        );
+        return;
+      }
+      if (msg.type === "error") {
+        setState((prev) =>
+          "tag" in prev
+            ? { kind: "runError", tag: prev.tag, message: msg.message }
+            : prev,
+        );
       }
     };
     workerRef.current = worker;
-    setState({ kind: "loading" });
-    return () => worker.terminate();
-  }, []);
+    return () => {
+      worker.terminate();
+      workerRef.current = null;
+      workerReadyRef.current = false;
+    };
+  }, [requestLoad]);
+
+  // Kick off the initial load once both the worker exists and we know which tag to load.
+  useEffect(() => {
+    if (!selectedTag || !workerRef.current) return;
+    if (state.kind === "loadingVersion" && state.tag === selectedTag) {
+      requestLoad(selectedTag);
+    }
+  }, [selectedTag, state, requestLoad]);
+
+  const onSelectChange = useCallback((e: React.ChangeEvent<HTMLSelectElement>) => {
+    const tag = e.target.value;
+    if (tag === selectedTag) return;
+    setSelectedTag(tag);
+    try { localStorage.setItem(STORAGE_KEY, tag); } catch { /* private mode */ }
+    requestLoad(tag);
+  }, [selectedTag, requestLoad]);
 
   const onRun = useCallback(() => {
     if (!workerRef.current) return;
-    setState({ kind: "running" });
+    if (state.kind !== "ready" && state.kind !== "done" && state.kind !== "runError") return;
+    setState({ kind: "running", tag: state.tag });
     setTrace("");
     workerRef.current.postMessage({ type: "run", ir });
-  }, [ir]);
+  }, [ir, state]);
+
+  const runDisabled =
+    state.kind !== "ready" && state.kind !== "done" && state.kind !== "runError";
+  const selectDisabled =
+    state.kind === "loadingManifest" ||
+    state.kind === "manifestError" ||
+    state.kind === "noVersions" ||
+    state.kind === "running";
 
   const statusText = (() => {
     switch (state.kind) {
-      case "idle": return "ready";
-      case "loading": return "loading wasm…";
-      case "running": return "running InstCombine…";
-      case "done": return `trace ${state.bytes.toLocaleString()} bytes`;
-      case "error": return `error: ${state.message}`;
+      case "loadingManifest": return "loading manifest…";
+      case "manifestError":   return `manifest error: ${state.message}`;
+      case "noVersions":      return "no wasm versions published yet — push a release/* tag";
+      case "loadingVersion":  return `loading ${state.tag}…`;
+      case "ready":           return "ready";
+      case "running":         return "running InstCombine…";
+      case "done":            return `trace ${state.bytes.toLocaleString()} bytes`;
+      case "loadError":       return `load error: ${state.message}`;
+      case "runError":        return `run error: ${state.message}`;
     }
   })();
 
@@ -64,12 +232,19 @@ export function App() {
     <div className="app">
       <header className="toolbar">
         <h1>InstCombine fold debugger</h1>
-        <button
-          onClick={onRun}
-          disabled={state.kind === "loading" || state.kind === "running"}
-        >
-          Run
-        </button>
+        <label className="version-picker">
+          version
+          <select
+            value={selectedTag ?? ""}
+            onChange={onSelectChange}
+            disabled={selectDisabled || !manifest || manifest.releases.length === 0}
+          >
+            {manifest?.releases.map((r) => (
+              <option key={r.tag} value={r.tag}>{formatLabel(r)}</option>
+            )) ?? <option value="">(loading)</option>}
+          </select>
+        </label>
+        <button onClick={onRun} disabled={runDisabled}>Run</button>
         <span className="status">{statusText}</span>
       </header>
       <main className="panes">

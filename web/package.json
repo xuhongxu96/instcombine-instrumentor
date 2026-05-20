@@ -6,7 +6,8 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc --noEmit && vite build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "build-manifest": "node scripts/build-manifest.mjs"
   },
   "dependencies": {
     "@monaco-editor/react": "^4.6.0",

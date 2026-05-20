@@ -1,11 +1,16 @@
 // Web Worker that hosts the emscripten-built InstCombine driver.
 //
-// The wasm module is loaded lazily from the public folder so the main bundle
-// stays small. We chdir to /work so the runtime's relative `llvm_fuzz_info.txt`
-// write lands somewhere we can read back.
+// The main thread chooses which wasm bundle to use via a `loadVersion` message
+// (bundled = same-origin Pages asset, remote = fetched from a GitHub Release).
+// Switching versions tears down the previous module and revokes any blob URLs
+// it allocated. The runtime's trace file lives in MEMFS at /work/llvm_fuzz_info.txt;
+// we chdir there so the runtime's relative open() succeeds.
 
-interface RunMessage { type: "run"; ir: string; }
-type IncomingMessage = RunMessage;
+import type { WasmSource } from "../wasm/manifest";
+
+interface LoadVersionMessage { type: "loadVersion"; id: string; source: WasmSource; }
+interface RunMessage         { type: "run"; ir: string; }
+type IncomingMessage = LoadVersionMessage | RunMessage;
 
 type EmscriptenModule = {
   FS: {
@@ -19,57 +24,107 @@ type EmscriptenModule = {
   ccall: (name: string, ret: string | null, args: string[], values: unknown[]) => unknown;
 };
 
-declare const self: DedicatedWorkerGlobalScope;
-
-let modulePromise: Promise<EmscriptenModule> | null = null;
-
-function getBaseUrl(): string {
-  // Vite injects BASE_URL at build time; defaults to "/".
-  const base = (import.meta as ImportMeta & { env?: { BASE_URL?: string } }).env?.BASE_URL ?? "/";
-  return base.endsWith("/") ? base : base + "/";
+interface ActiveModule {
+  id: string;
+  promise: Promise<EmscriptenModule>;
+  revokeUrls: string[];
 }
 
-async function loadModule(): Promise<EmscriptenModule> {
-  if (!modulePromise) {
-    const wasmJsUrl = `${getBaseUrl()}wasm/instcombine_driver.js`;
-    // dynamic import keeps the wasm loader out of the main bundle entirely
-    const mod = await import(/* @vite-ignore */ wasmJsUrl);
-    const createModule = (mod.default ?? mod) as (cfg: object) => Promise<EmscriptenModule>;
-    modulePromise = createModule({
-      noInitialRun: true,
-      print: (s: string) => console.log("[wasm stdout]", s),
-      printErr: (s: string) => console.warn("[wasm stderr]", s),
-    });
+declare const self: DedicatedWorkerGlobalScope;
+
+let active: ActiveModule | null = null;
+
+async function loadFromSource(id: string, source: WasmSource): Promise<ActiveModule> {
+  const revokeUrls: string[] = [];
+  let jsImportUrl: string;
+  let locateFile: ((path: string) => string) | undefined;
+
+  if (source.kind === "bundled") {
+    // Same-origin: dynamic import resolves the wasm sibling via the JS loader's own
+    // import.meta.url, so no locateFile override is needed.
+    jsImportUrl = source.jsUrl;
+  } else {
+    // Cross-origin module imports require strict CORS + correct Content-Type from
+    // the responding server. Sidestep that by fetching as blobs and importing the
+    // resulting blob URL — same-origin from the browser's perspective.
+    const [jsResp, wasmResp] = await Promise.all([
+      fetch(source.jsUrl),
+      fetch(source.wasmUrl),
+    ]);
+    if (!jsResp.ok) throw new Error(`fetch js failed: ${jsResp.status}`);
+    if (!wasmResp.ok) throw new Error(`fetch wasm failed: ${wasmResp.status}`);
+    const [jsBlob, wasmBlob] = await Promise.all([jsResp.blob(), wasmResp.blob()]);
+    const jsBlobUrl = URL.createObjectURL(jsBlob);
+    const wasmBlobUrl = URL.createObjectURL(wasmBlob);
+    revokeUrls.push(jsBlobUrl, wasmBlobUrl);
+    jsImportUrl = jsBlobUrl;
+    locateFile = () => wasmBlobUrl;
   }
-  return modulePromise;
+
+  const mod = await import(/* @vite-ignore */ jsImportUrl);
+  const createModule = (mod.default ?? mod) as (cfg: object) => Promise<EmscriptenModule>;
+  const promise = createModule({
+    noInitialRun: true,
+    print: (s: string) => console.log("[wasm stdout]", s),
+    printErr: (s: string) => console.warn("[wasm stderr]", s),
+    ...(locateFile ? { locateFile } : {}),
+  });
+  return { id, promise, revokeUrls };
+}
+
+function teardown(m: ActiveModule | null): void {
+  if (!m) return;
+  for (const url of m.revokeUrls) URL.revokeObjectURL(url);
 }
 
 self.onmessage = async (e: MessageEvent<IncomingMessage>) => {
   const msg = e.data;
-  if (msg.type !== "run") return;
-
-  try {
-    const Module = await loadModule();
-    try { Module.FS.mkdir("/work"); } catch { /* already exists */ }
-    Module.FS.chdir("/work");
-    Module.FS.writeFile("/work/input.ll", msg.ir);
-    try { Module.FS.unlink("/work/llvm_fuzz_info.txt"); } catch { /* not present */ }
-
-    Module.callMain([]);
-    Module.ccall("dump_iteration_info_external", null, [], []);
-
-    let trace = "";
+  if (msg.type === "loadVersion") {
+    const prev = active;
     try {
-      trace = Module.FS.readFile("/work/llvm_fuzz_info.txt", { encoding: "utf8" });
-    } catch {
-      trace = "(no trace produced — InstCombine made no changes, or the runtime failed to open the trace file)";
+      const next = await loadFromSource(msg.id, msg.source);
+      await next.promise;
+      active = next;
+      teardown(prev);
+      self.postMessage({ type: "loaded", id: msg.id });
+    } catch (err) {
+      self.postMessage({
+        type: "loadError",
+        id: msg.id,
+        message: err instanceof Error ? err.message : String(err),
+      });
     }
-    self.postMessage({ type: "done", trace });
-  } catch (err) {
-    self.postMessage({
-      type: "error",
-      message: err instanceof Error ? err.message : String(err),
-    });
+    return;
+  }
+
+  if (msg.type === "run") {
+    if (!active) {
+      self.postMessage({ type: "error", message: "no version loaded" });
+      return;
+    }
+    try {
+      const Module = await active.promise;
+      try { Module.FS.mkdir("/work"); } catch { /* already exists */ }
+      Module.FS.chdir("/work");
+      Module.FS.writeFile("/work/input.ll", msg.ir);
+      try { Module.FS.unlink("/work/llvm_fuzz_info.txt"); } catch { /* not present */ }
+
+      Module.callMain([]);
+      Module.ccall("dump_iteration_info_external", null, [], []);
+
+      let trace = "";
+      try {
+        trace = Module.FS.readFile("/work/llvm_fuzz_info.txt", { encoding: "utf8" });
+      } catch {
+        trace = "(no trace produced — InstCombine made no changes, or the runtime failed to open the trace file)";
+      }
+      self.postMessage({ type: "done", trace });
+    } catch (err) {
+      self.postMessage({
+        type: "error",
+        message: err instanceof Error ? err.message : String(err),
+      });
+    }
   }
 };
 

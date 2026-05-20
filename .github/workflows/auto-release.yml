@@ -1,0 +1,56 @@
+name: auto-release
+
+# Scan upstream LLVM for new stable git tags (llvmorg-X.Y.Z) and, for each tag
+# this repo hasn't released yet, push a release/<llvm-tag> tag whose commit bumps
+# llvm_commit.txt and then explicitly dispatch build.yml + wasm.yml against that
+# tag's ref. We dispatch instead of relying on the tag-push trigger because tag
+# pushes made with the default GITHUB_TOKEN don't fire downstream workflows
+# (loop prevention) — but workflow_dispatch events fired by GITHUB_TOKEN do.
+# This means no Personal Access Token, deploy key, or GitHub App is required.
+
+on:
+  schedule:
+    - cron: '0 5 * * 1'
+  workflow_dispatch:
+    inputs:
+      max_tags:
+        description: 'Max number of missing upstream tags to release this run'
+        required: false
+        default: '3'
+      dry_run:
+        description: 'Print plan without pushing tags'
+        required: false
+        default: 'false'
+
+permissions:
+  contents: write
+  actions: write
+
+jobs:
+  scan-and-release:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Compute missing stable upstream tags
+        id: plan
+        run: |
+          set -euo pipefail
+          MISSING=$(bash .github/scripts/list_missing_llvm_tags.sh "${{ github.event.inputs.max_tags || '3' }}")
+          echo "planning to release (oldest first):"
+          printf '%s\n' "$MISSING"
+          {
+            echo "missing<<EOF"
+            printf '%s\n' "$MISSING"
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Push release tags and dispatch builds
+        if: steps.plan.outputs.missing != ''
+        env:
+          DRY_RUN: ${{ github.event.inputs.dry_run || 'false' }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: printf '%s\n' "${{ steps.plan.outputs.missing }}" | bash .github/scripts/auto_release_tags.sh
