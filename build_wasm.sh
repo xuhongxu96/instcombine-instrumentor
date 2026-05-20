@@ -26,6 +26,11 @@ if ! command -v emcmake >/dev/null 2>&1; then
     exit 1
 fi
 
+export CCACHE_DIR=${CCACHE_DIR:-$HOME/.cache/ccache}
+export CCACHE_BASEDIR=$(realpath .)
+export CCACHE_COMPILERCHECK=${CCACHE_COMPILERCHECK:-"%compiler% --version"}
+export CCACHE_NOHASHDIR=${CCACHE_NOHASHDIR:-1}
+
 HOST_TBLGEN="$HOST_BUILD_DIR/bin/llvm-tblgen"
 HOST_MIN_TBLGEN="$HOST_BUILD_DIR/bin/llvm-min-tblgen"
 
@@ -40,7 +45,9 @@ if [ ! -x "$HOST_TBLGEN" ] || [ ! -x "$HOST_MIN_TBLGEN" ]; then
         -DLLVM_INCLUDE_TESTS=OFF \
         -DLLVM_INCLUDE_BENCHMARKS=OFF \
         -DLLVM_INCLUDE_EXAMPLES=OFF \
-        -DLLVM_ENABLE_PROJECTS=""
+        -DLLVM_ENABLE_PROJECTS="" \
+        -DLLVM_CCACHE_BUILD=ON \
+        -DLLVM_CCACHE_MAXSIZE=200G
     cmake --build "$HOST_BUILD_DIR" -j "$(nproc)" --target llvm-tblgen llvm-min-tblgen
 else
     echo "=== Stage 1: reusing cached llvm-tblgen at $HOST_TBLGEN ==="
@@ -73,7 +80,9 @@ emcmake cmake -GNinja \
     -DLLVM_TABLEGEN="$HOST_TBLGEN_ABS" \
     -DLLVM_NATIVE_TOOL_DIR="$(realpath "$HOST_BUILD_DIR/bin")" \
     -DLLVM_EXTERNAL_PROJECTS=instcombine_driver \
-    -DLLVM_EXTERNAL_INSTCOMBINE_DRIVER_SOURCE_DIR="$DRIVER_DIR_ABS"
+    -DLLVM_EXTERNAL_INSTCOMBINE_DRIVER_SOURCE_DIR="$DRIVER_DIR_ABS" \
+    -DLLVM_CCACHE_BUILD=ON \
+    -DLLVM_CCACHE_MAXSIZE=200G
 
 cmake --build "$WASM_BUILD_DIR" -j "$(nproc)" --target instcombine_driver
 

@@ -74,11 +74,24 @@ jobs:
             build/llvm-host/bin/llvm-min-tblgen
           key: host-tblgen-${{ runner.os }}-${{ steps.llvm.outputs.sha }}
 
+      - name: Restore ccache
+        uses: actions/cache@v4
+        with:
+          path: .ccache
+          key: ccache-wasm-${{ runner.os }}-${{ steps.llvm.outputs.sha }}
+          restore-keys: ccache-wasm-${{ runner.os }}-
+
       - name: Patch LLVM
         run: uv run python patch_llvm.py --llvm-repo thirdparty/llvm-project
 
       - name: Build wasm bundle
+        env:
+          CCACHE_DIR: ${{ github.workspace }}/.ccache
         run: bash build_wasm.sh
+
+      - name: ccache stats
+        if: always()
+        run: ccache -s || true
 
       - name: Smoke test wasm
         run: node wasm/test/smoke_wasm.mjs
