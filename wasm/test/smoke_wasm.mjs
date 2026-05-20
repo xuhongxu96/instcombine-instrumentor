@@ -1,7 +1,7 @@
 // Node-based smoke test for the wasm InstCombine driver. Mirrors
-// smoke_test.sh's IR and assertions. The trace now comes from the
-// patcher-maintained LLVM_FUZZ_TRACE_SCOPE call path, so native and wasm
-// produce the same frame format — see runtime/fuzz_runtime.cpp.
+// smoke_test.sh's IR and assertions. The trace comes from the patcher's
+// CallScope call path (caller name + call-site file:line per frame), so
+// native and wasm produce the same frame format — see runtime/fuzz_runtime.cpp.
 //
 // Usage: node wasm/test/smoke_wasm.mjs [path/to/instcombine_driver.js]
 
@@ -69,6 +69,47 @@ if (missing.length) {
   console.error("--- trace ---\n" + trace);
   if (stderrChunks.length) console.error("--- stderr ---\n" + stderrChunks.join("\n"));
   process.exit(1);
+}
+
+// Call-site assertion: the visitAdd frame's line should be a call site
+// *inside* visitAdd's body (where it dispatches), not visitAdd's signature
+// line. Skip if the patched source isn't available.
+const visitAddSource = resolve(
+  __dirname,
+  "../../thirdparty/llvm-project/llvm/lib/Transforms/InstCombine/InstCombineAddSub.cpp",
+);
+let visitAddSigLine = null;
+try {
+  const src = readFileSync(visitAddSource, "utf8");
+  const lines = src.split("\n");
+  for (let i = 0; i < lines.length; i++) {
+    if (lines[i].includes("Instruction *InstCombinerImpl::visitAdd")) {
+      visitAddSigLine = i + 1;
+      break;
+    }
+  }
+} catch {
+  // not fatal — source may not be available
+}
+
+const visitAddTraceMatch = trace.match(/visitAdd\([^)]*\)[^\s]* at [^ ]+\.cpp:(\d+)/);
+const visitAddTraceLine = visitAddTraceMatch ? parseInt(visitAddTraceMatch[1], 10) : null;
+
+if (visitAddSigLine !== null && visitAddTraceLine !== null) {
+  if (visitAddTraceLine === visitAddSigLine) {
+    console.error(
+      `FAIL: visitAdd frame line ${visitAddTraceLine} equals signature line ${visitAddSigLine} — call-site instrumentation didn't take effect`,
+    );
+    console.error("--- trace ---\n" + trace);
+    process.exit(1);
+  }
+  console.log(
+    `Call-site assertion OK: visitAdd frame at line ${visitAddTraceLine}, sig at ${visitAddSigLine}`,
+  );
+} else {
+  console.warn(
+    `WARN: could not extract visitAdd lines (sig=${visitAddSigLine} trace=${visitAddTraceLine}) — skipping call-site assertion`,
+  );
 }
 
 console.log(`wasm smoke OK — trace ${trace.length} bytes`);

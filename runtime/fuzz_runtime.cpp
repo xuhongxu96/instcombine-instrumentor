@@ -15,7 +15,7 @@ namespace llvm_fuzz {
 struct Frame {
     const char* file;
     int line;
-    const char* func;
+    const char* name;
 };
 
 static thread_local std::vector<Frame> call_path;
@@ -50,12 +50,12 @@ static bool is_trace_disabled() {
     return trace_disabled;
 }
 
-TraceScope::TraceScope(const char* file, int line, const char* func) {
+CallScope::CallScope(const char* file, int line, const char* caller_name) {
     if (is_trace_disabled()) return;
-    call_path.push_back({file, line, func});
+    call_path.push_back({file, line, caller_name});
 }
 
-TraceScope::~TraceScope() {
+CallScope::~CallScope() {
     if (is_trace_disabled()) return;
     if (!call_path.empty()) call_path.pop_back();
 }
@@ -94,15 +94,18 @@ static void record_stacktrace_unlocked(void* val, const char* file = nullptr, in
 
     auto it = get_trace_map().find(val);
     if (it == get_trace_map().end()) {
-        // Snapshot the patcher-maintained call path (top of stack first, like
-        // PrintStackTrace's #0 = innermost frame).
+        // Each frame in call_path was pushed by a __llvm_fuzz_call wrap; the
+        // frame holds the *caller's* identity: the file/line of the call site
+        // and the __PRETTY_FUNCTION__ of the function that made the call.
+        // Print top of stack first (innermost caller) as #1; #0 is on the
+        // VALUE header from the (file, line, func) args below.
         std::string st_str;
         {
             llvm::raw_string_ostream rso_st(st_str);
             const auto& path = call_path;
             for (size_t i = 0; i < path.size(); ++i) {
                 const auto& f = path[path.size() - 1 - i];
-                rso_st << " #" << i << " " << (f.func ? f.func : "?")
+                rso_st << " #" << (i + 1) << " " << (f.name ? f.name : "?")
                        << " at " << (f.file ? f.file : "?") << ":" << f.line << "\n";
             }
         }

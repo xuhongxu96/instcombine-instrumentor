@@ -7,9 +7,9 @@ namespace llvm {
 }
 
 namespace llvm_fuzz {
-    struct TraceScope {
-        TraceScope(const char* file, int line, const char* func);
-        ~TraceScope();
+    struct CallScope {
+        CallScope(const char* file, int line, const char* caller_name);
+        ~CallScope();
     };
 
     void record_stacktrace(void* val, const char* file, int line, const char* func);
@@ -24,13 +24,20 @@ namespace llvm_fuzz {
     }
 }
 
-#define __llvm_fuzz_record(val) llvm_fuzz::record_stacktrace_with_loc((val), __FILE__, __LINE__, __PRETTY_FUNCTION__)
+#define __llvm_fuzz_record(val) ::llvm_fuzz::record_stacktrace_with_loc((val), __FILE__, __LINE__, __PRETTY_FUNCTION__)
 
-#define LLVM_FUZZ_TRACE_SCOPE() \
-    ::llvm_fuzz::TraceScope __llvm_fuzz_scope(__FILE__, __LINE__, __PRETTY_FUNCTION__)
+// GCC statement expression instead of a lambda: in C++17 lambdas can't capture
+// structured bindings, and InstCombine has many `for (auto [k, v] : ...)` loops
+// whose bodies contain wrappable calls. The block scope doesn't "capture" —
+// `expr` references outer names natively — so structured bindings work.
+#define __llvm_fuzz_call(expr) \
+    __extension__ ({ \
+        ::llvm_fuzz::CallScope __llvm_fuzz_cs(__FILE__, __LINE__, __PRETTY_FUNCTION__); \
+        (expr); \
+    })
 
 inline void __llvm_fuzz_record_replace(void* old_v, void* new_v) {
-    llvm_fuzz::record_replacement(old_v, new_v);
+    ::llvm_fuzz::record_replacement(old_v, new_v);
 }
 
 #endif

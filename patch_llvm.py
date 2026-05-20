@@ -8,6 +8,7 @@ intended to be diff-equivalent against the original on a clean LLVM checkout.
 from __future__ import annotations
 
 import argparse
+import re
 import sys
 from pathlib import Path
 from typing import Iterator
@@ -20,6 +21,7 @@ CPP = Language(tree_sitter_cpp.language())
 FUNC_QUERY = Query(CPP, "(function_definition) @func")
 RETURN_EXPR_QUERY = Query(CPP, "(return_statement (_) @expr) @ret")
 RETURN_ANY_QUERY = Query(CPP, "(return_statement) @ret")
+CALL_QUERY = Query(CPP, "(call_expression) @call")
 
 POINTER_TYPE_HINTS = (
     b"Instruction",
@@ -30,6 +32,10 @@ POINTER_TYPE_HINTS = (
     b"PHINode",
     b"SelectInst",
 )
+
+# IRBuilder methods that produce new Values. Allowlisted by pattern so we don't
+# have to enumerate dozens of CreateAdd/CreateSub/CreateICmp/... variants.
+CREATE_PATTERN = re.compile(rb"^Create[A-Z]")
 
 FUZZ_INCLUDE = b'#include "llvm/IR/fuzz_runtime.h"\n'
 
@@ -125,6 +131,192 @@ def create_fuzz_runtime(llvm_repo: Path) -> None:
     source_path.write_text(FUZZ_RUNTIME_CPP)
 
 
+def _is_pointer_return(prefix_text: bytes, declarator: Node, allow_star_in_prefix: bool) -> bool:
+    type_match = any(hint in prefix_text for hint in POINTER_TYPE_HINTS)
+    if not type_match:
+        return False
+    if declarator.type == "pointer_declarator":
+        return True
+    if allow_star_in_prefix and b"*" in prefix_text:
+        return True
+    return False
+
+
+def _extract_callee_name(func_node: Node) -> bytes | None:
+    """Extract the bare callee name from a call_expression's `function` field child.
+
+    Walks the field structure explicitly (don't use generic descendant search —
+    sibling order through `descendants_of_type`'s stack-pop isn't reliable).
+    """
+    if func_node is None:
+        return None
+    t = func_node.type
+    if t in ("identifier", "field_identifier"):
+        return func_node.text
+    if t == "field_expression":
+        return _extract_callee_name(func_node.child_by_field_name("field"))
+    if t == "qualified_identifier":
+        return _extract_callee_name(func_node.child_by_field_name("name"))
+    if t == "template_function":
+        return _extract_callee_name(func_node.child_by_field_name("name"))
+    if t == "parenthesized_expression":
+        for child in func_node.children:
+            if child.is_named:
+                return _extract_callee_name(child)
+        return None
+    return None
+
+
+def _call_is_allowlisted(bare: bytes, instrumented_names: set[bytes]) -> bool:
+    if bare in instrumented_names:
+        return True
+    if CREATE_PATTERN.match(bare):
+        return True
+    return False
+
+
+def _is_inside_fuzz_wrap(node: Node, content: bytes) -> bool:
+    """True if `node` is wrapped by an existing __llvm_fuzz_call / __llvm_fuzz_record."""
+    current = node.parent
+    while current is not None:
+        if current.type == "call_expression":
+            func = current.child_by_field_name("function")
+            if func is not None:
+                func_text = content[func.start_byte:func.end_byte]
+                if func_text in (b"__llvm_fuzz_call", b"__llvm_fuzz_record"):
+                    return True
+        current = current.parent
+    return False
+
+
+def _collect_wrap_call_ids(
+    body: Node,
+    content: bytes,
+    instrumented_names: set[bytes],
+) -> set[int]:
+    """IDs of call_expression nodes inside `body` that should be wrapped with __llvm_fuzz_call."""
+    wrap_ids: set[int] = set()
+    for _pi, captures in CALL_QUERY.matches(body):
+        call = first_capture(captures, "call")
+        if call is None:
+            continue
+        # Idempotency: skip the wrapper itself and skip calls already inside a wrapper.
+        func = call.child_by_field_name("function")
+        if func is not None:
+            func_text = content[func.start_byte:func.end_byte]
+            if func_text in (b"__llvm_fuzz_call", b"__llvm_fuzz_record"):
+                continue
+        if _is_inside_fuzz_wrap(call, content):
+            continue
+        bare = _extract_callee_name(func)
+        if bare is None:
+            continue
+        if not _call_is_allowlisted(bare, instrumented_names):
+            continue
+        wrap_ids.add(call.id)
+    return wrap_ids
+
+
+def _find_direct_wrap_descendants(node: Node, wrap_ids: set[int]) -> list[Node]:
+    """Return descendants of `node` whose id is in `wrap_ids`, skipping into a wrap once found."""
+    result: list[Node] = []
+    stack = list(node.children)
+    while stack:
+        n = stack.pop()
+        if n.id in wrap_ids:
+            result.append(n)
+            # Don't descend further into this wrap; its subtree is rendered by the recursive call.
+        else:
+            stack.extend(n.children)
+    return result
+
+
+def _render_with_inner_wraps(node: Node, content: bytes, wrap_ids: set[int]) -> bytes:
+    """Render node's text with inner wrap_ids descendants substituted."""
+    inner = _find_direct_wrap_descendants(node, wrap_ids)
+    if not inner:
+        return content[node.start_byte:node.end_byte]
+    inner.sort(key=lambda n: n.start_byte)
+    parts: list[bytes] = []
+    cursor = node.start_byte
+    for w in inner:
+        if w.start_byte > cursor:
+            parts.append(content[cursor:w.start_byte])
+        parts.append(_render_wrap_unit(w, content, wrap_ids))
+        cursor = w.end_byte
+    if cursor < node.end_byte:
+        parts.append(content[cursor:node.end_byte])
+    return b"".join(parts)
+
+
+def _render_wrap_unit(node: Node, content: bytes, wrap_ids: set[int]) -> bytes:
+    """Render `node`, wrapping it with __llvm_fuzz_call if its id is in wrap_ids,
+    and recursively splicing nested wraps."""
+    inner_text = _render_with_inner_wraps(node, content, wrap_ids)
+    if node.id in wrap_ids:
+        return b"__llvm_fuzz_call(" + inner_text + b")"
+    return inner_text
+
+
+def _body_edits(
+    content: bytes,
+    body: Node,
+    wrap_ids: set[int],
+    return_exprs: list[Node],
+) -> list[tuple[int, int, bytes]]:
+    """Produce one set of non-overlapping edits for this body.
+
+    `wrap_ids`: call_expression node ids to wrap with __llvm_fuzz_call.
+    `return_exprs`: top-level return expression nodes to additionally wrap with __llvm_fuzz_record.
+
+    Resolves overlaps by treating the outermost "unit" (whatever's at the top of any wrap chain)
+    as the edit target, and splicing inner wraps into its replacement text.
+    """
+    return_expr_ids = {e.id for e in return_exprs}
+    unit_ids = wrap_ids | return_expr_ids
+
+    def _has_unit_ancestor(node: Node) -> bool:
+        cur = node.parent
+        while cur is not None and cur.id != body.id:
+            if cur.id in unit_ids:
+                return True
+            cur = cur.parent
+        return False
+
+    edits: list[tuple[int, int, bytes]] = []
+    seen_unit: set[int] = set()
+
+    # Process return exprs first — they often subsume call wraps.
+    for expr in return_exprs:
+        if _has_unit_ancestor(expr):
+            continue
+        if expr.id in seen_unit:
+            continue
+        seen_unit.add(expr.id)
+        inner = _render_wrap_unit(expr, content, wrap_ids)
+        edits.append((expr.start_byte, expr.end_byte, b"__llvm_fuzz_record(" + inner + b")"))
+
+    # Now emit outermost call wraps that weren't covered by a return.
+    # Need stable iteration: sort wrap_ids by depth (outermost first) via byte range.
+    wrap_nodes: list[Node] = []
+    for _pi, captures in CALL_QUERY.matches(body):
+        call = first_capture(captures, "call")
+        if call is not None and call.id in wrap_ids:
+            wrap_nodes.append(call)
+    # An outermost wrap is one whose chain of ancestors (within body) contains no other unit.
+    wrap_nodes.sort(key=lambda n: (n.start_byte, -n.end_byte))
+    for call in wrap_nodes:
+        if call.id in seen_unit:
+            continue
+        if _has_unit_ancestor(call):
+            continue
+        seen_unit.add(call.id)
+        rendered = _render_wrap_unit(call, content, wrap_ids)
+        edits.append((call.start_byte, call.end_byte, rendered))
+
+    return edits
+
+
 def patch_value_cpp(file_path: Path) -> None:
     print(f"Patching {file_path}...")
     content = file_path.read_bytes()
@@ -153,23 +345,10 @@ def patch_value_cpp(file_path: Path) -> None:
     file_path.write_bytes(patched)
 
 
-def _insert_trace_scope(body: Node, edits: list[tuple[int, int, bytes]]) -> bool:
-    """Insert LLVM_FUZZ_TRACE_SCOPE() at the top of `body`. Returns True if added."""
-    if b"LLVM_FUZZ_TRACE_SCOPE" in body.text:
-        return False
-    insert_at = body.start_byte + 1
-    edits.append((insert_at, insert_at, b"\n  LLVM_FUZZ_TRACE_SCOPE();"))
-    return True
-
-
-def _wrap_returns(
-    content: bytes,
-    body: Node,
-    edits: list[tuple[int, int, bytes]],
-) -> bool:
-    """Wrap top-level `return X;` expressions in __llvm_fuzz_record(...). Returns True if changed."""
-    changed = False
-    for _pattern_idx, captures in RETURN_EXPR_QUERY.matches(body):
+def _collect_returns_for_wrap(content: bytes, body: Node) -> list[Node]:
+    """Collect top-level return expression nodes to wrap with __llvm_fuzz_record."""
+    result: list[Node] = []
+    for _pi, captures in RETURN_EXPR_QUERY.matches(body):
         ret_node = first_capture(captures, "ret")
         expr_node = first_capture(captures, "expr")
         if ret_node is None or expr_node is None:
@@ -179,27 +358,17 @@ def _wrap_returns(
         expr_text = content[expr_node.start_byte:expr_node.end_byte]
         if b"__llvm_fuzz_record" in expr_text or expr_text == b"nullptr":
             continue
-        edits.append((
-            expr_node.start_byte,
-            expr_node.end_byte,
-            b"__llvm_fuzz_record(" + expr_text + b")",
-        ))
-        changed = True
-    return changed
+        result.append(expr_node)
+    return result
 
 
-def _is_pointer_return(prefix_text: bytes, declarator: Node, allow_star_in_prefix: bool) -> bool:
-    type_match = any(hint in prefix_text for hint in POINTER_TYPE_HINTS)
-    if not type_match:
-        return False
-    if declarator.type == "pointer_declarator":
-        return True
-    if allow_star_in_prefix and b"*" in prefix_text:
-        return True
-    return False
-
-
-def patch_inst_combine_file(file_path: Path) -> None:
+def _patch_file_generic(
+    file_path: Path,
+    instrumented_names: set[bytes],
+    *,
+    allow_star_in_prefix: bool,
+    is_inst_combining_cpp: bool,
+) -> None:
     print(f"Patching {file_path}...")
     content = file_path.read_bytes()
     root = parse_bytes(content)
@@ -207,7 +376,6 @@ def patch_inst_combine_file(file_path: Path) -> None:
     edits: list[tuple[int, int, bytes]] = []
     processed_bodies: set[int] = set()
     changed = False
-    file_path_str = str(file_path)
 
     for _pattern_idx, captures in FUNC_QUERY.matches(root):
         func_node = first_capture(captures, "func")
@@ -225,37 +393,45 @@ def patch_inst_combine_file(file_path: Path) -> None:
             continue
 
         prefix_text = content[func_node.start_byte:declarator.start_byte]
+        is_pointer = _is_pointer_return(prefix_text, declarator, allow_star_in_prefix=allow_star_in_prefix)
 
-        if _is_pointer_return(prefix_text, declarator, allow_star_in_prefix=False):
-            if _wrap_returns(content, body, edits):
+        # Call wraps apply in every body (so calls from utility/void/bool functions
+        # still get attributed). Return wraps only in pointer-return functions.
+        wrap_ids = _collect_wrap_call_ids(body, content, instrumented_names)
+        return_exprs = _collect_returns_for_wrap(content, body) if is_pointer else []
+
+        if wrap_ids or return_exprs:
+            body_edits = _body_edits(content, body, wrap_ids, return_exprs)
+            if body_edits:
+                edits.extend(body_edits)
                 changed = True
-            if _insert_trace_scope(body, edits):
+
+        # Special-case InstCombinerImpl::run (only in InstructionCombining.cpp).
+        if (
+            is_inst_combining_cpp
+            and get_function_name(func_node) == b"run"
+            and b"InstCombinerImpl" in declarator.text
+        ):
+            if b"llvm_fuzz::start_iteration()" not in body.text:
+                insert_at = body.start_byte + 1
+                edits.append((insert_at, insert_at, b"\n  llvm_fuzz::start_iteration();"))
                 changed = True
 
-        if get_function_name(func_node) == b"run" and file_path_str.endswith("InstructionCombining.cpp"):
-            if b"InstCombinerImpl" in declarator.text:
-                if _insert_trace_scope(body, edits):
-                    changed = True
-                if b"llvm_fuzz::start_iteration()" not in body.text:
-                    insert_at = body.start_byte + 1
-                    edits.append((insert_at, insert_at, b"\n  llvm_fuzz::start_iteration();"))
-                    changed = True
-
-                if b"dump_iteration_info" not in body.text:
-                    for _pi, ret_caps in RETURN_ANY_QUERY.matches(body):
-                        ret_node = first_capture(ret_caps, "ret")
-                        if ret_node is None:
-                            continue
-                        if is_inside_nested_scope(ret_node, body):
-                            continue
-                        ret_text = content[ret_node.start_byte:ret_node.end_byte]
-                        if b"MadeIRChange" in ret_text:
-                            edits.append((
-                                ret_node.start_byte,
-                                ret_node.end_byte,
-                                b"if (MadeIRChange) llvm_fuzz::dump_iteration_info(); return MadeIRChange;",
-                            ))
-                            changed = True
+            if b"dump_iteration_info" not in body.text:
+                for _pi, ret_caps in RETURN_ANY_QUERY.matches(body):
+                    ret_node = first_capture(ret_caps, "ret")
+                    if ret_node is None:
+                        continue
+                    if is_inside_nested_scope(ret_node, body):
+                        continue
+                    ret_text = content[ret_node.start_byte:ret_node.end_byte]
+                    if b"MadeIRChange" in ret_text:
+                        edits.append((
+                            ret_node.start_byte,
+                            ret_node.end_byte,
+                            b"if (MadeIRChange) llvm_fuzz::dump_iteration_info(); return MadeIRChange;",
+                        ))
+                        changed = True
 
     if not changed:
         return
@@ -265,43 +441,22 @@ def patch_inst_combine_file(file_path: Path) -> None:
     file_path.write_bytes(patched)
 
 
-def patch_instruction_simplify_file(file_path: Path) -> None:
-    print(f"Patching {file_path} (Specialized for Simplify)...")
-    content = file_path.read_bytes()
-    root = parse_bytes(content)
+def patch_inst_combine_file(file_path: Path, instrumented_names: set[bytes]) -> None:
+    _patch_file_generic(
+        file_path,
+        instrumented_names,
+        allow_star_in_prefix=False,
+        is_inst_combining_cpp=file_path.name == "InstructionCombining.cpp",
+    )
 
-    edits: list[tuple[int, int, bytes]] = []
-    processed_bodies: set[int] = set()
-    changed = False
 
-    for _pattern_idx, captures in FUNC_QUERY.matches(root):
-        func_node = first_capture(captures, "func")
-        if func_node is None:
-            continue
-        body = func_node.child_by_field_name("body")
-        if body is None:
-            continue
-        if body.id in processed_bodies:
-            continue
-        processed_bodies.add(body.id)
-
-        declarator = func_node.child_by_field_name("declarator")
-        if declarator is None:
-            continue
-
-        prefix_text = content[func_node.start_byte:declarator.start_byte]
-        if _is_pointer_return(prefix_text, declarator, allow_star_in_prefix=True):
-            if _wrap_returns(content, body, edits):
-                changed = True
-            if _insert_trace_scope(body, edits):
-                changed = True
-
-    if not changed:
-        return
-
-    patched = apply_edits(content, edits)
-    patched = ensure_fuzz_include(patched)
-    file_path.write_bytes(patched)
+def patch_instruction_simplify_file(file_path: Path, instrumented_names: set[bytes]) -> None:
+    _patch_file_generic(
+        file_path,
+        instrumented_names,
+        allow_star_in_prefix=True,
+        is_inst_combining_cpp=False,
+    )
 
 
 def update_core_cmake(file_path: Path) -> None:
@@ -316,8 +471,52 @@ def update_core_cmake(file_path: Path) -> None:
     file_path.write_text(new_content)
 
 
+def _collect_instrumented_names(llvm_repo: Path) -> set[bytes]:
+    """First pass: scan all patched files and return the set of bare names of
+    functions matching `_is_pointer_return`. These become the call-site
+    allowlist (alongside the ^Create[A-Z] regex)."""
+    names: set[bytes] = set()
+    targets: list[tuple[Path, bool]] = []
+
+    inst_combine_dir = llvm_repo / "llvm/lib/Transforms/InstCombine"
+    if inst_combine_dir.is_dir():
+        for entry in sorted(inst_combine_dir.iterdir()):
+            if entry.suffix in (".cpp", ".h") and entry.is_file():
+                targets.append((entry, False))
+
+    inst_simplify = llvm_repo / "llvm/lib/Analysis/InstructionSimplify.cpp"
+    if inst_simplify.is_file():
+        targets.append((inst_simplify, True))
+
+    for file_path, allow_star in targets:
+        content = file_path.read_bytes()
+        root = parse_bytes(content)
+        processed: set[int] = set()
+        for _pi, captures in FUNC_QUERY.matches(root):
+            func_node = first_capture(captures, "func")
+            if func_node is None:
+                continue
+            body = func_node.child_by_field_name("body")
+            if body is None or body.id in processed:
+                continue
+            processed.add(body.id)
+            declarator = func_node.child_by_field_name("declarator")
+            if declarator is None:
+                continue
+            prefix_text = content[func_node.start_byte:declarator.start_byte]
+            if _is_pointer_return(prefix_text, declarator, allow_star_in_prefix=allow_star):
+                name = get_function_name(func_node)
+                if name:
+                    names.add(name)
+    return names
+
+
 def patch_llvm(llvm_repo: Path) -> None:
     create_fuzz_runtime(llvm_repo)
+
+    print("Collecting instrumented function names (first pass)...")
+    instrumented_names = _collect_instrumented_names(llvm_repo)
+    print(f"  Found {len(instrumented_names)} instrumented function names.")
 
     tasks: list[tuple[str, Path]] = []
 
@@ -338,9 +537,9 @@ def patch_llvm(llvm_repo: Path) -> None:
         if kind == "VALUE_CPP":
             patch_value_cpp(file_path)
         elif kind == "INST_COMBINE":
-            patch_inst_combine_file(file_path)
+            patch_inst_combine_file(file_path, instrumented_names)
         elif kind == "INST_SIMPLIFY":
-            patch_instruction_simplify_file(file_path)
+            patch_instruction_simplify_file(file_path, instrumented_names)
         else:
             raise RuntimeError(f"Unknown task type: {kind}")
 
