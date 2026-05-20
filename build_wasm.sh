@@ -40,7 +40,6 @@ if [ ! -x "$HOST_TBLGEN" ] || [ ! -x "$HOST_MIN_TBLGEN" ]; then
         -S "$LLVM_DIR/llvm" \
         -B "$HOST_BUILD_DIR" \
         -DCMAKE_BUILD_TYPE=Release \
-        -DCMAKE_DISABLE_PRECOMPILE_HEADERS=ON \
         -DLLVM_TARGETS_TO_BUILD="" \
         -DLLVM_INCLUDE_TESTS=OFF \
         -DLLVM_INCLUDE_BENCHMARKS=OFF \
@@ -62,7 +61,6 @@ emcmake cmake -GNinja \
     -S "$LLVM_DIR/llvm" \
     -B "$WASM_BUILD_DIR" \
     -DCMAKE_BUILD_TYPE=Release \
-    -DCMAKE_DISABLE_PRECOMPILE_HEADERS=ON \
     -DLLVM_TARGETS_TO_BUILD="" \
     -DLLVM_INCLUDE_TESTS=OFF \
     -DLLVM_INCLUDE_BENCHMARKS=OFF \
