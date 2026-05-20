@@ -10,7 +10,9 @@ BUILD_DIR=${BUILD_DIR:-build/llvm-rel}
 BUILD_TARGETS=${BUILD_TARGETS:-opt llvm-symbolizer}
 
 export CCACHE_DIR=${CCACHE_DIR:-$HOME/.cache/ccache}
-export CCACHE_BASEDIR=$(realpath "$LLVM_DIR")
+export CCACHE_BASEDIR=$(realpath .)
+export CCACHE_COMPILERCHECK=${CCACHE_COMPILERCHECK:-content}
+export CCACHE_NOHASHDIR=${CCACHE_NOHASHDIR:-1}
 
 cmake -GNinja \
     -S "${LLVM_DIR}/llvm" \
