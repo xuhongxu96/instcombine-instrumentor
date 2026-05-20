@@ -55,8 +55,8 @@ jobs:
       - name: Set up emsdk
         uses: emscripten-core/setup-emsdk@v16
         with:
-          version: latest
-          actions-cache-folder: emsdk-cache
+          version: 5.0.7
+          actions-cache-folder: emsdk-cache-5.0.7
 
       - name: Cache host llvm-tblgen
         uses: actions/cache@v4
@@ -85,7 +85,7 @@ jobs:
         if: always()
         env:
           CCACHE_DIR: ${{ github.workspace }}/.ccache
-        run: ccache -s || true
+        run: ccache -s -v || ccache -s || true
 
       - name: Smoke test wasm
         run: node wasm/test/smoke_wasm.mjs

@@ -30,11 +30,11 @@ The patched binary writes its trace to `./llvm_fuzz_info.txt`. Set
 ## Quickstart (webapp / WebAssembly)
 
 Prereqs: native toolchain (clang/lld/cmake/ninja), activated
-[emsdk](https://emscripten.org/) `latest`, Node 20+.
+[emsdk](https://emscripten.org/) `5.0.7`, Node 20+.
 
 ```bash
 git clone --depth 1 https://github.com/emscripten-core/emsdk.git thirdparty/emsdk
-./thirdparty/emsdk/emsdk install latest && ./thirdparty/emsdk/emsdk activate latest
+./thirdparty/emsdk/emsdk install 5.0.7 && ./thirdparty/emsdk/emsdk activate 5.0.7
 source ./thirdparty/emsdk/emsdk_env.sh
 
 bash clone_llvm.sh
