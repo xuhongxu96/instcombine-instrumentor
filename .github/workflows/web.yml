@@ -61,7 +61,7 @@ jobs:
         run: bash .github/scripts/resolve_llvm_commit.sh
 
       - name: Set up emsdk
-        uses: mymindstorm/setup-emsdk@v14
+        uses: emscripten-core/setup-emsdk@v16
         with:
           version: latest
           actions-cache-folder: emsdk-cache
