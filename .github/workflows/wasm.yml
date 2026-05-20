@@ -83,6 +83,8 @@ jobs:
 
       - name: ccache stats
         if: always()
+        env:
+          CCACHE_DIR: ${{ github.workspace }}/.ccache
         run: ccache -s || true
 
       - name: Smoke test wasm
