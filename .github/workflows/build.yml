@@ -47,8 +47,8 @@ jobs:
         uses: actions/cache@v4
         with:
           path: .ccache
-          key: ccache-${{ runner.os }}-${{ steps.llvm.outputs.sha }}
-          restore-keys: ccache-${{ runner.os }}-
+          key: ccache-build-${{ runner.os }}-${{ steps.llvm.outputs.sha }}
+          restore-keys: ccache-build-${{ runner.os }}-
 
       - name: Patch LLVM
         run: uv run python patch_llvm.py --llvm-repo thirdparty/llvm-project
