@@ -2,19 +2,8 @@
 set -euo pipefail
 
 OPT_BIN=${OPT_BIN:-build/llvm-rel/bin/opt}
-SYMBOLIZER_BIN=${SYMBOLIZER_BIN:-$(dirname "$OPT_BIN")/llvm-symbolizer}
 TRACE_FILE=${TRACE_FILE:-llvm_fuzz_info.txt}
 SMOKE_IR=${SMOKE_IR:-$(mktemp --suffix=.ll)}
-
-# Picked up by LLVM's PrettyStackTrace / signal-handler symbolization,
-# and by the instrumentation when it dumps stack frames into TRACE_FILE.
-export LLVM_SYMBOLIZER_PATH="$SYMBOLIZER_BIN"
-
-if [ ! -x "$SYMBOLIZER_BIN" ]; then
-    echo "FAIL: $SYMBOLIZER_BIN not found or not executable"
-    exit 1
-fi
-"$SYMBOLIZER_BIN" --version
 
 cat > "$SMOKE_IR" <<'EOF'
 define i32 @f(i32 %x) {
@@ -41,12 +30,10 @@ if ! grep -qE "ITERATION|NEW INSTRUCTIONS|REPLACEMENTS" "$TRACE_FILE"; then
     cat "$TRACE_FILE"
     exit 1
 fi
-# Symbolized frames carry demangled "llvm::InstVisitor" names; an unsymbolized
-# trace shows raw 0x... addresses or mangled _ZN4llvm... symbols, neither
-# of which contains the literal "llvm::InstVisitor".
-if ! grep -q "llvm::InstVisitor" "$TRACE_FILE"; then
-    echo "FAIL: instrumentation trace has no symbolized llvm::InstVisitor frames"
-    echo "(LLVM_SYMBOLIZER_PATH=$LLVM_SYMBOLIZER_PATH was not honored, or symbolizer is broken)"
+# The patcher-maintained call path always carries the visit* dispatch frame
+# (e.g. InstCombinerImpl::visitAdd) for the trivial `add %x, 0` smoke input.
+if ! grep -q "visitAdd" "$TRACE_FILE"; then
+    echo "FAIL: instrumentation trace has no visitAdd frame"
     cat "$TRACE_FILE"
     exit 1
 fi

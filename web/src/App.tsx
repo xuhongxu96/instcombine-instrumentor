@@ -20,6 +20,7 @@ export function App() {
   const [ir, setIr] = useState(DEFAULT_IR);
   const [trace, setTrace] = useState("");
   const [state, setState] = useState<RunState>({ kind: "idle" });
+  const [wordWrap, setWordWrap] = useState(true);
   const workerRef = useRef<Worker | null>(null);
 
   useEffect(() => {
@@ -79,9 +80,19 @@ export function App() {
           </div>
         </section>
         <section className="pane">
-          <div className="pane-header">llvm_fuzz_info.txt</div>
+          <div className="pane-header">
+            <span>llvm_fuzz_info.txt</span>
+            <button
+              type="button"
+              className="pane-header-button"
+              onClick={() => setWordWrap((w) => !w)}
+              title="Toggle word wrap"
+            >
+              {wordWrap ? "wrap: on" : "wrap: off"}
+            </button>
+          </div>
           <div className="pane-body">
-            <TracePanel trace={trace} />
+            <TracePanel trace={trace} wordWrap={wordWrap} />
           </div>
         </section>
       </main>

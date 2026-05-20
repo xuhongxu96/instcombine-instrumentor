@@ -3,6 +3,7 @@ import { useCallback } from "react";
 
 interface TracePanelProps {
   trace: string;
+  wordWrap: boolean;
 }
 
 const PLACEHOLDER = "— click Run to capture a trace —";
@@ -67,7 +68,7 @@ function registerTraceLang(monaco: typeof import("monaco-editor")) {
   });
 }
 
-export function TracePanel({ trace }: TracePanelProps) {
+export function TracePanel({ trace, wordWrap }: TracePanelProps) {
   const handleMount = useCallback<OnMount>((editor, monaco) => {
     registerTraceLang(monaco);
     monaco.editor.setModelLanguage(editor.getModel()!, TRACE_LANG_ID);
@@ -88,7 +89,7 @@ export function TracePanel({ trace }: TracePanelProps) {
         fontSize: 13,
         lineNumbers: "on",
         scrollBeyondLastLine: false,
-        wordWrap: "on",
+        wordWrap: wordWrap ? "on" : "off",
         wrappingStrategy: "advanced",
         renderWhitespace: "none",
         contextmenu: false,

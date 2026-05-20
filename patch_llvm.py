@@ -153,6 +153,15 @@ def patch_value_cpp(file_path: Path) -> None:
     file_path.write_bytes(patched)
 
 
+def _insert_trace_scope(body: Node, edits: list[tuple[int, int, bytes]]) -> bool:
+    """Insert LLVM_FUZZ_TRACE_SCOPE() at the top of `body`. Returns True if added."""
+    if b"LLVM_FUZZ_TRACE_SCOPE" in body.text:
+        return False
+    insert_at = body.start_byte + 1
+    edits.append((insert_at, insert_at, b"\n  LLVM_FUZZ_TRACE_SCOPE();"))
+    return True
+
+
 def _wrap_returns(
     content: bytes,
     body: Node,
@@ -220,9 +229,13 @@ def patch_inst_combine_file(file_path: Path) -> None:
         if _is_pointer_return(prefix_text, declarator, allow_star_in_prefix=False):
             if _wrap_returns(content, body, edits):
                 changed = True
+            if _insert_trace_scope(body, edits):
+                changed = True
 
         if get_function_name(func_node) == b"run" and file_path_str.endswith("InstructionCombining.cpp"):
             if b"InstCombinerImpl" in declarator.text:
+                if _insert_trace_scope(body, edits):
+                    changed = True
                 if b"llvm_fuzz::start_iteration()" not in body.text:
                     insert_at = body.start_byte + 1
                     edits.append((insert_at, insert_at, b"\n  llvm_fuzz::start_iteration();"))
@@ -280,6 +293,8 @@ def patch_instruction_simplify_file(file_path: Path) -> None:
         if _is_pointer_return(prefix_text, declarator, allow_star_in_prefix=True):
             if _wrap_returns(content, body, edits):
                 changed = True
+            if _insert_trace_scope(body, edits):
+                changed = True
 
     if not changed:
         return
@@ -297,30 +312,6 @@ def update_core_cmake(file_path: Path) -> None:
     new_content = content.replace(
         "add_llvm_component_library(LLVMCore",
         "add_llvm_component_library(LLVMCore\n  fuzz_runtime.cpp",
-    )
-    file_path.write_text(new_content)
-
-
-def update_analysis_cmake(file_path: Path) -> None:
-    print(f"Updating {file_path}...")
-    content = file_path.read_text()
-    if "set_source_files_properties(InstructionSimplify.cpp" in content:
-        return
-    new_content = (
-        content
-        + '\nset_source_files_properties(InstructionSimplify.cpp PROPERTIES COMPILE_OPTIONS "-O0;-g")\n'
-    )
-    file_path.write_text(new_content)
-
-
-def update_inst_combine_cmake(file_path: Path) -> None:
-    print(f"Updating {file_path}...")
-    content = file_path.read_text()
-    if "target_compile_options(LLVMInstCombine" in content:
-        return
-    new_content = (
-        content
-        + "\ntarget_compile_options(LLVMInstCombine\n  PRIVATE\n  -O0;-g\n)\n"
     )
     file_path.write_text(new_content)
 
@@ -354,8 +345,6 @@ def patch_llvm(llvm_repo: Path) -> None:
             raise RuntimeError(f"Unknown task type: {kind}")
 
     update_core_cmake(llvm_repo / "llvm/lib/IR/CMakeLists.txt")
-    update_analysis_cmake(llvm_repo / "llvm/lib/Analysis/CMakeLists.txt")
-    update_inst_combine_cmake(llvm_repo / "llvm/lib/Transforms/InstCombine/CMakeLists.txt")
 
     print("Patching completed.")
 

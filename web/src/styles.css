@@ -53,10 +53,25 @@ html, body, #root { height: 100%; margin: 0; }
 .pane { display: flex; flex-direction: column; min-height: 0; }
 .pane + .pane { border-left: 1px solid var(--border); }
 .pane-header {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
   padding: 0.4rem 0.75rem;
   font-size: 0.8rem;
   color: var(--muted);
   border-bottom: 1px solid var(--border);
   background: var(--bg-alt);
 }
+.pane-header-button {
+  margin-left: auto;
+  padding: 0.1rem 0.5rem;
+  font: inherit;
+  font-size: 0.75rem;
+  color: var(--muted);
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  cursor: pointer;
+}
+.pane-header-button:hover { color: inherit; }
 .pane-body { flex: 1; min-height: 0; overflow: hidden; }

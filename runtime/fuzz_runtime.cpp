@@ -2,9 +2,6 @@
 #include "llvm/IR/Function.h"
 #include "llvm/IR/Value.h"
 #include "llvm/Support/raw_ostream.h"
-#ifndef __EMSCRIPTEN__
-#include "llvm/Support/Signals.h"
-#endif
 #include "llvm/Support/FileSystem.h"
 #include <map>
 #include <vector>
@@ -14,6 +11,14 @@
 #include <cstdint>
 
 namespace llvm_fuzz {
+
+struct Frame {
+    const char* file;
+    int line;
+    const char* func;
+};
+
+static thread_local std::vector<Frame> call_path;
 
 struct Replacement {
     void* old_ptr;
@@ -43,6 +48,16 @@ static bool is_trace_disabled() {
       return disabled;
     })();
     return trace_disabled;
+}
+
+TraceScope::TraceScope(const char* file, int line, const char* func) {
+    if (is_trace_disabled()) return;
+    call_path.push_back({file, line, func});
+}
+
+TraceScope::~TraceScope() {
+    if (is_trace_disabled()) return;
+    if (!call_path.empty()) call_path.pop_back();
 }
 
 static std::mutex& get_global_mutex() {
@@ -79,14 +94,18 @@ static void record_stacktrace_unlocked(void* val, const char* file = nullptr, in
 
     auto it = get_trace_map().find(val);
     if (it == get_trace_map().end()) {
-        // Capture stack trace (skipped under emscripten — wasm frames aren't symbolizable)
+        // Snapshot the patcher-maintained call path (top of stack first, like
+        // PrintStackTrace's #0 = innermost frame).
         std::string st_str;
-#ifndef __EMSCRIPTEN__
-        llvm::raw_string_ostream rso_st(st_str);
-        llvm::sys::PrintStackTrace(rso_st);
-#else
-        st_str = "(stacktrace disabled under emscripten)";
-#endif
+        {
+            llvm::raw_string_ostream rso_st(st_str);
+            const auto& path = call_path;
+            for (size_t i = 0; i < path.size(); ++i) {
+                const auto& f = path[path.size() - 1 - i];
+                rso_st << " #" << i << " " << (f.func ? f.func : "?")
+                       << " at " << (f.file ? f.file : "?") << ":" << f.line << "\n";
+            }
+        }
 
         // Capture value string representation
         std::string v_str;

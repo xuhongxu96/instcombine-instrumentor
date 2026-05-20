@@ -1,6 +1,7 @@
 // Node-based smoke test for the wasm InstCombine driver. Mirrors
-// smoke_test.sh's IR and assertions, minus the "llvm::InstVisitor" check
-// (PrintStackTrace is compiled out under emscripten — see runtime/fuzz_runtime.cpp).
+// smoke_test.sh's IR and assertions. The trace now comes from the
+// patcher-maintained LLVM_FUZZ_TRACE_SCOPE call path, so native and wasm
+// produce the same frame format — see runtime/fuzz_runtime.cpp.
 //
 // Usage: node wasm/test/smoke_wasm.mjs [path/to/instcombine_driver.js]
 

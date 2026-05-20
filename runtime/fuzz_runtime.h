@@ -7,6 +7,11 @@ namespace llvm {
 }
 
 namespace llvm_fuzz {
+    struct TraceScope {
+        TraceScope(const char* file, int line, const char* func);
+        ~TraceScope();
+    };
+
     void record_stacktrace(void* val, const char* file, int line, const char* func);
     void record_replacement(void* old_val, void* new_val);
     void start_iteration();
@@ -20,6 +25,9 @@ namespace llvm_fuzz {
 }
 
 #define __llvm_fuzz_record(val) llvm_fuzz::record_stacktrace_with_loc((val), __FILE__, __LINE__, __PRETTY_FUNCTION__)
+
+#define LLVM_FUZZ_TRACE_SCOPE() \
+    ::llvm_fuzz::TraceScope __llvm_fuzz_scope(__FILE__, __LINE__, __PRETTY_FUNCTION__)
 
 inline void __llvm_fuzz_record_replace(void* old_v, void* new_v) {
     llvm_fuzz::record_replacement(old_v, new_v);
