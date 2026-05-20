@@ -5,21 +5,28 @@ and every RAUW replacement performed by InstCombine / InstructionSimplify on
 each pass iteration. Useful for fuzzing and differential analysis of
 InstCombine folds.
 
+Live webapp: **<https://xuhongxu.com/instcombine-instrumentor/>**
+
 Ships in two flavors:
 
 - **Native `opt`** — full instrumentation with symbolized stack traces.
 - **In-browser webapp** — a Vite + React + Monaco SPA that runs a minimal
   WebAssembly build of InstCombine on user-pasted IR and renders the trace
-  inline. Deployed from this repo to GitHub Pages.
+  inline. Deployed from this repo to GitHub Pages at
+  <https://xuhongxu.com/instcombine-instrumentor/>.
 
 ## Layout
 
 - `llvm_commit.txt` — LLVM ref (commit SHA or tag) to build against.
 - `clone_llvm.sh` — clones LLVM into `thirdparty/llvm-project` at that ref.
 - `runtime/fuzz_runtime.{h,cpp}` — the C++ instrumentation runtime injected
-  into the LLVM tree. Dual-target via `#ifdef __EMSCRIPTEN__`: native
-  builds use `PrintStackTrace` + `std::atexit`; the wasm build drops both
-  and exposes `extern "C" dump_iteration_info_external` for the JS host.
+  into the LLVM tree. Call-path frames come from a self-maintained
+  `thread_local` stack populated by an RAII `TraceScope` that the patcher
+  inserts at the top of every wrapped function, so native and wasm produce
+  identical traces with no dependency on `llvm-symbolizer`. The only
+  `#ifdef __EMSCRIPTEN__` guards `std::atexit` (unreliable under emscripten);
+  an always-emitted `extern "C" dump_iteration_info_external` lets the JS
+  host flush the final iteration explicitly.
 - `patch_llvm.py` — loads `runtime/*` and patches the LLVM source tree,
   wrapping pointer-returning functions across InstCombine /
   InstructionSimplify / `Value::doRAUW`.
@@ -98,27 +105,22 @@ and produces a ~8 MB `instcombine_driver.wasm`. The Web Worker writes IR to
 ### Example output
 
 Feeding the smoke-test IR through `opt -passes=instcombine` produces a trace
-that looks like this (frames elided for brevity — see `llvm_fuzz_info.txt`
-for the full backtraces):
+that looks like this:
 
 ```text
 === SESSION START ===
 === ITERATION START ===
 
 NEW INSTRUCTIONS IN THIS ITERATION:
-VALUE 0x55ef...46d0 (i32 %x) at simplifyAddInst (InstructionSimplify.cpp:610):
- #4 simplifyAddInst(...)                      InstructionSimplify.cpp:610:5
- #5 llvm::simplifyAddInst(...)                InstructionSimplify.cpp:664:10
- #6 llvm::InstCombinerImpl::visitAdd(...)     InstCombineAddSub.cpp:1528:14
- #7 llvm::InstVisitor<...>::visit(...)        Instruction.def:147:1
- #8 llvm::InstCombinerImpl::run()             InstructionCombining.cpp:5759:22
- ...
-#18 optMain                                   (build/llvm-rel/bin/opt+0x162873a)
+VALUE 0x55ef...46d0 (i32 %x) at llvm::Value *simplifyAddInst(...) (InstructionSimplify.cpp:622):
+ #0 llvm::Value *simplifyAddInst(...)              at InstructionSimplify.cpp:608
+ #1 llvm::Value *llvm::simplifyAddInst(...)        at InstructionSimplify.cpp:676
+ #2 llvm::Instruction *llvm::InstCombinerImpl::visitAdd(...) at InstCombineAddSub.cpp:1552
+ #3 bool llvm::InstCombinerImpl::run()             at InstructionCombining.cpp:5679
 
-VALUE 0x55ef...5130 (  %a = add i32 %x, 0) at visitAdd (InstCombineAddSub.cpp:1531):
- #4 llvm::InstCombinerImpl::visitAdd(...)     InstCombineAddSub.cpp:1531:5
- #5 llvm::InstVisitor<...>::visit(...)        Instruction.def:147:1
- ...
+VALUE 0x55ef...5130 (  %a = add i32 %x, 0) at llvm::Instruction *llvm::InstCombinerImpl::visitAdd(...) (InstCombineAddSub.cpp:1556):
+ #0 llvm::Instruction *llvm::InstCombinerImpl::visitAdd(...) at InstCombineAddSub.cpp:1552
+ #1 bool llvm::InstCombinerImpl::run()             at InstructionCombining.cpp:5679
 
 REPLACEMENTS IN THIS ITERATION:
 0x55ef...5130 (  %a = add i32 %x, 0) -> 0x55ef...46d0 (i32 %x)
@@ -130,8 +132,8 @@ How to read it:
 - **`SESSION` / `ITERATION`** bracket one InstCombine fixed-point iteration.
 - **`NEW INSTRUCTIONS`** lists every `Value*` the instrumentation observed
   being produced this iteration. Each entry pairs the pointer + IR text with
-  a symbolized stack trace pointing back to the exact LLVM source line that
-  created it — useful for attributing surprising IR to a specific fold.
+  the call path of patched fold helpers that ran on the way to creating it
+  — useful for attributing surprising IR to a specific fold.
 - **`REPLACEMENTS`** lists every `Value::doRAUW` performed this iteration in
   `old -> new` form. In the example above, `%a = add i32 %x, 0` was folded
   away and all uses replaced with `%x`.
@@ -139,17 +141,13 @@ How to read it:
 Cross-reference a pointer like `0x55ef...46d0` between the two sections to
 see which new value participated in which replacement.
 
-> **Note:** symbolized frames require `llvm-symbolizer` to be reachable. The
-> patched binary picks it up from `$PATH` or from `LLVM_SYMBOLIZER_PATH`. The
-> release/artifact bundle ships `llvm-symbolizer` next to `opt`; keep them in
-> the same directory or set `LLVM_SYMBOLIZER_PATH` explicitly.
->
-> Under emscripten the `PrintStackTrace` branch is compiled out — wasm frames
-> aren't symbolizable in a browser — so the wasm trace contains a single
-> `(stacktrace disabled under emscripten)` line per value in place of the
-> backtrace. The per-fold source location (`__FILE__:__LINE__` +
-> `__PRETTY_FUNCTION__`) is still captured by the `__llvm_fuzz_record` macro,
-> which is the whole signal you need to attribute a fold to its firing site.
+> **Note:** the frame stack is self-maintained — the patcher inserts
+> `LLVM_FUZZ_TRACE_SCOPE()` at the top of every wrapped function, and frames
+> carry `__FILE__:__LINE__` + `__PRETTY_FUNCTION__` captured at compile time.
+> No `llvm-symbolizer` dependency, and native and wasm traces are identical
+> in format and content. (The native release tarball still ships
+> `llvm-symbolizer` next to `opt` for LLVM's own PrettyStackTrace on crashes,
+> but it's not used by the InstCombine trace path.)
 
 ## Bumping the LLVM version
 
