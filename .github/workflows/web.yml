@@ -35,7 +35,7 @@ concurrency:
 
 jobs:
   build-wasm:
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-latest
     timeout-minutes: 350
     outputs:
       llvm-sha: ${{ steps.llvm.outputs.sha }}
@@ -108,7 +108,7 @@ jobs:
 
   build-frontend:
     needs: build-wasm
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
 
@@ -140,7 +140,7 @@ jobs:
   deploy:
     if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
     needs: build-frontend
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-latest
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
