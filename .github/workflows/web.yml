@@ -1,0 +1,137 @@
+name: web
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'patch_llvm.py'
+      - 'runtime/**'
+      - 'wasm/**'
+      - 'web/**'
+      - 'build_wasm.sh'
+      - 'llvm_commit.txt'
+      - '.github/workflows/web.yml'
+      - '.github/scripts/**'
+  pull_request:
+    paths:
+      - 'patch_llvm.py'
+      - 'runtime/**'
+      - 'wasm/**'
+      - 'web/**'
+      - 'build_wasm.sh'
+      - 'llvm_commit.txt'
+      - '.github/workflows/web.yml'
+      - '.github/scripts/**'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build-wasm:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 350
+    outputs:
+      llvm-sha: ${{ steps.llvm.outputs.sha }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install host toolchain
+        run: bash .github/scripts/install_toolchain.sh
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v3
+        with:
+          enable-cache: true
+
+      - name: Install Python deps
+        run: uv sync
+
+      - name: Clone LLVM
+        run: bash clone_llvm.sh
+
+      - name: Resolve LLVM commit
+        id: llvm
+        run: bash .github/scripts/resolve_llvm_commit.sh
+
+      - name: Set up emsdk
+        uses: mymindstorm/setup-emsdk@v14
+        with:
+          version: latest
+          actions-cache-folder: emsdk-cache
+
+      - name: Cache host llvm-tblgen
+        uses: actions/cache@v4
+        with:
+          path: |
+            build/llvm-host/bin/llvm-tblgen
+            build/llvm-host/bin/llvm-min-tblgen
+          key: host-tblgen-${{ runner.os }}-${{ steps.llvm.outputs.sha }}
+
+      - name: Patch LLVM
+        run: uv run python patch_llvm.py --llvm-repo thirdparty/llvm-project
+
+      - name: Build wasm bundle
+        run: bash build_wasm.sh
+
+      - name: Smoke test wasm
+        run: node wasm/test/smoke_wasm.mjs
+
+      - name: Upload wasm artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: wasm-bundle
+          path: |
+            build/llvm-wasm/bin/instcombine_driver.js
+            build/llvm-wasm/bin/instcombine_driver.wasm
+          if-no-files-found: error
+          retention-days: 7
+
+  build-frontend:
+    needs: build-wasm
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - name: Download wasm artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: wasm-bundle
+          path: web/public/wasm
+
+      - name: Install frontend deps
+        working-directory: web
+        run: npm install --no-audit --no-fund
+
+      - name: Build frontend
+        working-directory: web
+        run: npm run build
+
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: web/dist
+
+  deploy:
+    if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+    needs: build-frontend
+    runs-on: ubuntu-22.04
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4

@@ -1,20 +1,39 @@
 # instcombine-instrumentor
 
-Tools to build an instrumented LLVM `opt` that records every new instruction and
-every RAUW replacement performed by InstCombine / InstructionSimplify on each
-pass iteration. Useful for fuzzing and differential analysis of InstCombine
-folds.
+Tools to build an instrumented LLVM `opt` that records every new instruction
+and every RAUW replacement performed by InstCombine / InstructionSimplify on
+each pass iteration. Useful for fuzzing and differential analysis of
+InstCombine folds.
+
+Ships in two flavors:
+
+- **Native `opt`** — full instrumentation with symbolized stack traces.
+- **In-browser webapp** — a Vite + React + Monaco SPA that runs a minimal
+  WebAssembly build of InstCombine on user-pasted IR and renders the trace
+  inline. Deployed from this repo to GitHub Pages.
 
 ## Layout
 
 - `llvm_commit.txt` — LLVM ref (commit SHA or tag) to build against.
 - `clone_llvm.sh` — clones LLVM into `thirdparty/llvm-project` at that ref.
-- `patch_llvm.py` — injects a fuzz runtime into the LLVM source tree and wraps
-  return values across InstCombine / InstructionSimplify / `Value::doRAUW`.
+- `runtime/fuzz_runtime.{h,cpp}` — the C++ instrumentation runtime injected
+  into the LLVM tree. Dual-target via `#ifdef __EMSCRIPTEN__`: native
+  builds use `PrintStackTrace` + `std::atexit`; the wasm build drops both
+  and exposes `extern "C" dump_iteration_info_external` for the JS host.
+- `patch_llvm.py` — loads `runtime/*` and patches the LLVM source tree,
+  wrapping pointer-returning functions across InstCombine /
+  InstructionSimplify / `Value::doRAUW`.
 - `build_patched_llvm.sh` — configures and builds the patched `opt` into
   `build/llvm-rel/`.
+- `wasm/driver/` — ~50-line custom driver and `CMakeLists.txt` for the
+  minimal in-browser InstCombine binary.
+- `build_wasm.sh` — two-stage cross-compile: native `llvm-tblgen` at
+  `build/llvm-host/` then `emcmake` LLVM at `build/llvm-wasm/`. Outputs
+  land in `web/public/wasm/`.
+- `wasm/test/smoke_wasm.mjs` — Node-based smoke test for the wasm bundle.
+- `web/` — Vite + React + Monaco frontend. Worker hosts the wasm module.
 
-## Quickstart
+## Quickstart (native `opt`)
 
 Dependencies are managed with [uv](https://github.com/astral-sh/uv). Install
 once with `curl -LsSf https://astral.sh/uv/install.sh | sh` if you don't have
@@ -42,6 +61,39 @@ new instructions and RAUW replacements.
 
 Set `DISABLE_INSTCOMBINE_TRACE=1` at runtime to suppress all instrumentation
 output (the patched binary then behaves like a normal `opt`).
+
+## Quickstart (webapp / WebAssembly)
+
+The webapp is a fold-firing-location debugger: paste IR, click Run, see the
+trace render next to the source.
+
+Prereqs: native toolchain (clang/lld/cmake/ninja), an activated
+[emsdk](https://emscripten.org/) (`latest` is what CI uses), and Node 20+.
+
+```bash
+# clone + activate emsdk if you don't have one
+git clone --depth 1 https://github.com/emscripten-core/emsdk.git thirdparty/emsdk
+./thirdparty/emsdk/emsdk install latest && ./thirdparty/emsdk/emsdk activate latest
+source ./thirdparty/emsdk/emsdk_env.sh
+
+# patch + build (re-uses clone_llvm.sh / patch_llvm.py from the native path)
+bash clone_llvm.sh
+uv run python patch_llvm.py --llvm-repo thirdparty/llvm-project
+bash build_wasm.sh                # ~10-30 min cold; reuses build/llvm-host across runs
+
+# smoke (Node) — same IR as smoke_test.sh
+node wasm/test/smoke_wasm.mjs
+
+# dev server
+cd web && npm install && npm run dev
+# → http://localhost:5173/instcombine-instrumentor/
+```
+
+The minimal driver only links Core/Support/Analysis/TransformUtils/
+InstCombine/IRReader/AsmParser/BitReader/Passes — no codegen or vectorize —
+and produces a ~8 MB `instcombine_driver.wasm`. The Web Worker writes IR to
+`/work/input.ll` in MEMFS, runs `Module.callMain([])`, calls the exported
+`dump_iteration_info_external`, then reads `/work/llvm_fuzz_info.txt` back.
 
 ### Example output
 
@@ -91,43 +143,59 @@ see which new value participated in which replacement.
 > patched binary picks it up from `$PATH` or from `LLVM_SYMBOLIZER_PATH`. The
 > release/artifact bundle ships `llvm-symbolizer` next to `opt`; keep them in
 > the same directory or set `LLVM_SYMBOLIZER_PATH` explicitly.
+>
+> Under emscripten the `PrintStackTrace` branch is compiled out — wasm frames
+> aren't symbolizable in a browser — so the wasm trace contains a single
+> `(stacktrace disabled under emscripten)` line per value in place of the
+> backtrace. The per-fold source location (`__FILE__:__LINE__` +
+> `__PRETTY_FUNCTION__`) is still captured by the `__llvm_fuzz_record` macro,
+> which is the whole signal you need to attribute a fold to its firing site.
 
 ## Bumping the LLVM version
 
-Edit `llvm_commit.txt`, then:
+Edit `llvm_commit.txt`, then re-run the patcher and whichever build you
+care about:
 
 ```bash
 bash clone_llvm.sh
 uv run python patch_llvm.py --llvm-repo thirdparty/llvm-project
-bash build_patched_llvm.sh
+bash build_patched_llvm.sh    # native opt
+bash build_wasm.sh            # webapp wasm (requires emsdk)
 ```
 
 `patch_llvm.py` is idempotent — running it twice on the same checkout is a
-no-op.
+no-op. To edit the injected runtime, edit `runtime/fuzz_runtime.{h,cpp}`
+directly; the patcher reads them at import time.
 
 ## CI
 
-`.github/workflows/build.yml` builds `opt` (and `llvm-symbolizer`) on every
-push / PR. Pushing a tag matching `release/*` additionally bundles both
-binaries into `opt-llvm-<short-sha>.tar.xz` and uploads it to the
-corresponding GitHub Release; the short SHA reflects whatever
-`llvm_commit.txt` resolved to at build time.
-
-`.github/workflows/weekly-llvm.yml` runs every Monday (and on-demand via
-`workflow_dispatch`) against LLVM's current `main` tip, uploading the build
-as a 14-day artifact. Useful for catching upstream changes that break the
-patch.
+- `.github/workflows/build.yml` — native `opt` + `llvm-symbolizer` on every
+  push / PR. Pushing a tag matching `release/*` additionally bundles both
+  binaries into `opt-llvm-<short-sha>.tar.xz` and uploads it to the
+  corresponding GitHub Release.
+- `.github/workflows/web.yml` — builds the wasm bundle + frontend and
+  deploys to GitHub Pages on pushes to `main`. Caches the host `llvm-tblgen`
+  keyed on the resolved LLVM SHA so only the wasm stage reruns between
+  iterations.
+- `.github/workflows/weekly-llvm.yml` — every Monday (and on-demand via
+  `workflow_dispatch`) builds against LLVM's current `main` tip, uploading
+  the artifact for 14 days. Useful for catching upstream changes that break
+  the patch.
 
 ## Useful env vars
 
 | Var | Default | Meaning |
 |---|---|---|
 | `LLVM_DIR` | `thirdparty/llvm-project` | LLVM source tree |
-| `BUILD_DIR` | `build/llvm-rel` | CMake build directory |
-| `BUILD_TARGETS` | `opt` | targets passed to `cmake --build` |
+| `BUILD_DIR` | `build/llvm-rel` | CMake build directory (native) |
+| `BUILD_TARGETS` | `opt` | targets passed to `cmake --build` (native) |
 | `CCACHE_DIR` | `$HOME/.cache/ccache` | ccache cache directory |
 | `LLVM_PARALLEL_LINK_JOBS` | `1` | parallel link jobs (raise on fat machines) |
 | `DISABLE_INSTCOMBINE_TRACE` | unset | set to `1` or `true` to disable instrumentation at runtime |
+| `HOST_BUILD_DIR` | `build/llvm-host` | wasm host-stage build dir (where native `llvm-tblgen` lands) |
+| `WASM_BUILD_DIR` | `build/llvm-wasm` | wasm cross-compile build dir |
+| `WEB_PUBLIC_DIR` | `web/public/wasm` | where `build_wasm.sh` drops the bundle for Vite |
+| `VITE_BASE` | `/instcombine-instrumentor/` | override the Vite `base` (e.g. `VITE_BASE=/` for local preview) |
 
 ## License
 
