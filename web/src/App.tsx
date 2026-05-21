@@ -4,6 +4,7 @@ import { Editor } from "./components/Editor";
 import { CopyButton, OutputIrPane } from "./components/OutputIrPane";
 import { TracePanel, type TraceViewMode } from "./components/TracePanel";
 import { parseTraceJsonl } from "./trace/parse";
+import { llvmRefFromManifestTag } from "./trace/githubLink";
 import {
   releaseToSource,
   type WasmManifest,
@@ -87,6 +88,7 @@ export function App() {
   const lastLoadRequestRef = useRef<string | null>(null);
 
   const iterations = useMemo(() => parseTraceJsonl(traceJson), [traceJson]);
+  const llvmRef = useMemo(() => llvmRefFromManifestTag(selectedTag), [selectedTag]);
 
   const releaseByTag = useMemo(() => {
     const map = new Map<string, WasmRelease>();
@@ -360,6 +362,7 @@ export function App() {
                   wordWrap={wordWrap}
                   viewMode={viewMode}
                   iterations={iterations}
+                  llvmRef={llvmRef}
                 />
               </div>
             </section>

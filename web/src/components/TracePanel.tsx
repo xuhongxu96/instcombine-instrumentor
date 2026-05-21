@@ -10,6 +10,7 @@ interface TracePanelProps {
   wordWrap: boolean;
   viewMode: TraceViewMode;
   iterations: Iteration[];
+  llvmRef: string | null;
 }
 
 const PLACEHOLDER = "— click Run to capture a trace —";
@@ -78,7 +79,7 @@ function registerTraceLang(monaco: typeof import("monaco-editor")) {
   });
 }
 
-export function TracePanel({ trace, wordWrap, viewMode, iterations }: TracePanelProps) {
+export function TracePanel({ trace, wordWrap, viewMode, iterations, llvmRef }: TracePanelProps) {
   const handleMount = useCallback<OnMount>((editor, monaco) => {
     registerTraceLang(monaco);
     monaco.editor.setModelLanguage(editor.getModel()!, TRACE_LANG_ID);
@@ -87,7 +88,7 @@ export function TracePanel({ trace, wordWrap, viewMode, iterations }: TracePanel
   }, []);
 
   if (viewMode === "structured") {
-    return <StructuredTraceView iterations={iterations} />;
+    return <StructuredTraceView iterations={iterations} llvmRef={llvmRef} />;
   }
 
   return (

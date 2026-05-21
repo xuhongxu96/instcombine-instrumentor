@@ -1,8 +1,10 @@
 import { useCallback, useMemo, useRef, useState } from "react";
 import type { Frame, Iteration, NewValue, Replacement } from "../trace/types";
+import { displayPath, githubUrlFor, splitLoc } from "../trace/githubLink";
 
 interface Props {
   iterations: Iteration[];
+  llvmRef: string | null;
 }
 
 interface Filters {
@@ -46,7 +48,18 @@ function matchReplacement(r: Replacement, f: Filters): boolean {
   return true;
 }
 
-function FrameList({ frames }: { frames: Frame[] }) {
+function SrcLoc({ file, line, llvmRef }: { file: string; line: number; llvmRef: string | null }) {
+  const text = `${displayPath(file || "?")}:${line}`;
+  const url = file ? githubUrlFor(file, line, llvmRef) : null;
+  if (!url) return <span className="src-loc">{text}</span>;
+  return (
+    <a className="src-loc" href={url} target="_blank" rel="noopener noreferrer" title="open on GitHub">
+      {text}
+    </a>
+  );
+}
+
+function FrameList({ frames, llvmRef }: { frames: Frame[]; llvmRef: string | null }) {
   if (frames.length === 0) return null;
   return (
     <details className="trace-frames">
@@ -55,7 +68,7 @@ function FrameList({ frames }: { frames: Frame[] }) {
         {frames.map((f, idx) => (
           <li key={idx}>
             <span className="frame-name">{f.name || "?"}</span>
-            <span className="frame-loc"> at {f.file || "?"}:{f.line}</span>
+            <span className="frame-loc"> at <SrcLoc file={f.file} line={f.line} llvmRef={llvmRef} /></span>
           </li>
         ))}
       </ol>
@@ -63,7 +76,8 @@ function FrameList({ frames }: { frames: Frame[] }) {
   );
 }
 
-function ValueCard({ value }: { value: NewValue }) {
+function ValueCard({ value, llvmRef }: { value: NewValue; llvmRef: string | null }) {
+  const split = splitLoc(value.loc);
   return (
     <div className="trace-card" id={value.ptr}>
       <div className="trace-card-header">
@@ -80,9 +94,12 @@ function ValueCard({ value }: { value: NewValue }) {
       </div>
       <pre className="ir-text">{value.ir}</pre>
       <div className="trace-card-meta">
-        produced at <code>{value.func_name}</code> <span className="meta-loc">({value.loc})</span>
+        produced at <code>{value.func_name}</code>{" "}
+        <span className="meta-loc">
+          ({split ? <SrcLoc file={split.file} line={split.line} llvmRef={llvmRef} /> : displayPath(value.loc)})
+        </span>
       </div>
-      <FrameList frames={value.frames} />
+      <FrameList frames={value.frames} llvmRef={llvmRef} />
     </div>
   );
 }
@@ -123,7 +140,7 @@ function ReplacementRow({ r }: { r: Replacement }) {
   );
 }
 
-export function StructuredTraceView({ iterations }: Props) {
+export function StructuredTraceView({ iterations, llvmRef }: Props) {
   const [filters, setFilters] = useState<Filters>(EMPTY_FILTERS);
   const rootRef = useRef<HTMLDivElement>(null);
 
@@ -209,7 +226,7 @@ export function StructuredTraceView({ iterations }: Props) {
             <section className="iter-section">
               <h4>New instructions</h4>
               <div className="trace-cards">
-                {it.new_values.map((v) => <ValueCard key={v.ptr} value={v} />)}
+                {it.new_values.map((v) => <ValueCard key={v.ptr} value={v} llvmRef={llvmRef} />)}
               </div>
             </section>
           )}

@@ -279,6 +279,15 @@ html, body, #root { height: 100%; margin: 0; }
 }
 .meta-loc { opacity: 0.85; }
 
+a.src-loc {
+  color: #58a6ff;
+  text-decoration: none;
+}
+a.src-loc:hover { text-decoration: underline; }
+.src-loc {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+
 .trace-pill {
   display: inline-flex;
   align-items: center;
