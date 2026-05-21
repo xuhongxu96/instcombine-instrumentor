@@ -77,6 +77,7 @@ export function App() {
   const workerRef = useRef<Worker | null>(null);
   const workerReadyRef = useRef(false);
   const pendingLoadRef = useRef<string | null>(null);
+  const lastLoadRequestRef = useRef<string | null>(null);
 
   const releaseByTag = useMemo(() => {
     const map = new Map<string, WasmRelease>();
@@ -85,6 +86,7 @@ export function App() {
   }, [manifest]);
 
   const requestLoad = useCallback((tag: string) => {
+    if (lastLoadRequestRef.current === tag) return;
     const worker = workerRef.current;
     const release = releaseByTag.get(tag);
     if (!worker || !release) return;
@@ -93,6 +95,7 @@ export function App() {
       return;
     }
     const source = releaseToSource(release, getBaseUrl());
+    lastLoadRequestRef.current = tag;
     setState({ kind: "loadingVersion", tag });
     worker.postMessage({ type: "loadVersion", id: tag, source });
   }, [releaseByTag]);
@@ -154,6 +157,7 @@ export function App() {
         return;
       }
       if (msg.type === "loadError") {
+        lastLoadRequestRef.current = null;
         setState({ kind: "loadError", tag: msg.id, message: msg.message });
         return;
       }
@@ -179,6 +183,7 @@ export function App() {
       worker.terminate();
       workerRef.current = null;
       workerReadyRef.current = false;
+      lastLoadRequestRef.current = null;
     };
   }, [requestLoad]);
 

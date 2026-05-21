@@ -112,9 +112,3 @@ jobs:
             build/llvm-wasm/bin/instcombine_driver.js
             build/llvm-wasm/bin/instcombine_driver.wasm
           fail_on_unmatched_files: true
-
-      - name: Trigger Pages redeploy
-        if: startsWith(github.ref, 'refs/tags/release/')
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: gh workflow run pages.yml --ref main --repo "${{ github.repository }}"

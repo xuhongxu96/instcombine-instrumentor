@@ -4,7 +4,7 @@
 # first (so callers can process chronologically and the release page sorts naturally).
 #
 # Args:
-#   $1 — max tags (default 3)
+#   $1 — max tags (default 1)
 #   $2 — upstream repo URL (default https://github.com/llvm/llvm-project.git)
 #
 # Requires `git` and a checkout with `fetch-depth: 0` so local release tags are
@@ -12,7 +12,7 @@
 
 set -euo pipefail
 
-MAX_TAGS=${1:-3}
+MAX_TAGS=${1:-1}
 UPSTREAM=${2:-https://github.com/llvm/llvm-project.git}
 
 UPSTREAM_TAGS=$(mktemp)

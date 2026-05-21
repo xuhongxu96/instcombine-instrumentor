@@ -16,7 +16,7 @@ on:
       max_tags:
         description: 'Max number of missing upstream tags to release this run'
         required: false
-        default: '3'
+        default: '1'
       dry_run:
         description: 'Print plan without pushing tags'
         required: false
