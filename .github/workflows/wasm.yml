@@ -70,11 +70,31 @@ jobs:
           key: host-tblgen-${{ runner.os }}-${{ steps.llvm.outputs.sha }}
 
       - name: Restore ccache
+        id: ccache-restore
         uses: actions/cache@v4
         with:
           path: .ccache
-          key: ccache-wasm-${{ runner.os }}-${{ steps.llvm.outputs.sha }}
-          restore-keys: ccache-wasm-${{ runner.os }}-
+          # Unique per-run key so every run writes a fresh cache (actions/cache only
+          # saves on miss). Fallbacks restore the most recent same-SHA cache, then
+          # any prior wasm cache — this is what lets us absorb compiler/runner-image
+          # drift even when the LLVM SHA is unchanged.
+          key: ccache-wasm-${{ runner.os }}-${{ steps.llvm.outputs.sha }}-${{ github.run_id }}
+          restore-keys: |
+            ccache-wasm-${{ runner.os }}-${{ steps.llvm.outputs.sha }}-
+            ccache-wasm-${{ runner.os }}-
+
+      - name: Report ccache restore
+        env:
+          CCACHE_DIR: ${{ github.workspace }}/.ccache
+        run: |
+          echo "actions/cache primary-key hit: ${{ steps.ccache-restore.outputs.cache-hit }}"
+          echo "actions/cache matched key:     ${{ steps.ccache-restore.outputs.cache-matched-key }}"
+          if [ -d "$CCACHE_DIR" ]; then
+            echo "$CCACHE_DIR size: $(du -sh "$CCACHE_DIR" | cut -f1)"
+            echo "$CCACHE_DIR file count: $(find "$CCACHE_DIR" -type f | wc -l)"
+          else
+            echo "$CCACHE_DIR does not exist (cold start)"
+          fi
 
       - name: Patch LLVM
         run: uv run python patch_llvm.py --llvm-repo thirdparty/llvm-project
