@@ -76,7 +76,7 @@ export function App() {
   const [trace, setTrace] = useState("");
   const [traceJson, setTraceJson] = useState("");
   const [outputIr, setOutputIr] = useState("");
-  const [viewMode, setViewMode] = useState<TraceViewMode>("text");
+  const [viewMode, setViewMode] = useState<TraceViewMode>("structured");
   const [manifest, setManifest] = useState<WasmManifest | null>(null);
   const [selectedTag, setSelectedTag] = useState<string | null>(null);
   const [state, setState] = useState<WasmState>({ kind: "loadingManifest" });
