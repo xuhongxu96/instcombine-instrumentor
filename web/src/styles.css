@@ -79,10 +79,10 @@ html, body, #root { height: 100%; margin: 0; }
   color: var(--muted);
   border-bottom: 1px solid var(--border);
   background: var(--bg-alt);
-  min-height: 32px;
+  min-height: 34px;
 }
 .pane-header-button {
-  margin: 0 auto 0 0;
+  margin: 0 0 0 auto;
   padding: 0.1rem 0.5rem;
   font: inherit;
   font-size: 0.75rem;
