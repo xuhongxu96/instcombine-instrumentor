@@ -57,6 +57,11 @@ jobs:
       - name: Patch LLVM
         run: uv run python patch_llvm.py --llvm-repo thirdparty/llvm-project
 
+      - name: Reset ccache stats
+        env:
+          CCACHE_DIR: ${{ github.workspace }}/.ccache
+        run: ccache -z || true
+
       - name: Build opt
         env:
           CCACHE_DIR: ${{ github.workspace }}/.ccache
