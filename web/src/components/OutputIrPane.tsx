@@ -5,17 +5,22 @@ const PLACEHOLDER = "; run InstCombine to see the optimized IR";
 
 interface Props {
   ir: string;
+  error?: string;
 }
 
-export function OutputIrPane({ ir }: Props) {
+export function OutputIrPane({ ir, error }: Props) {
   const handleMount = useCallback<OnMount>((editor, _monaco) => {
     editor.revealLine(1);
   }, []);
 
+  const isError = !!error;
   return (
     <MonacoEditor
-      value={ir || PLACEHOLDER}
-      defaultLanguage="llvm-ir"
+      // Force a fresh editor instance when toggling between IR view and error
+      // view so the language/theme swap takes effect cleanly.
+      key={isError ? "error" : "ir"}
+      value={isError ? error : (ir || PLACEHOLDER)}
+      defaultLanguage={isError ? "plaintext" : "llvm-ir"}
       onMount={handleMount}
       theme="vs-dark"
       options={{
@@ -25,7 +30,7 @@ export function OutputIrPane({ ir }: Props) {
         fontSize: 13,
         lineNumbers: "on",
         scrollBeyondLastLine: false,
-        wordWrap: "off",
+        wordWrap: isError ? "on" : "off",
         renderWhitespace: "none",
         contextmenu: false,
       }}

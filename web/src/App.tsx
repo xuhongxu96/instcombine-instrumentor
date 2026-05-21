@@ -77,6 +77,7 @@ export function App() {
   const [trace, setTrace] = useState("");
   const [traceJson, setTraceJson] = useState("");
   const [outputIr, setOutputIr] = useState("");
+  const [runError, setRunError] = useState("");
   const [viewMode, setViewMode] = useState<TraceViewMode>("structured");
   const [manifest, setManifest] = useState<WasmManifest | null>(null);
   const [selectedTag, setSelectedTag] = useState<string | null>(null);
@@ -187,17 +188,35 @@ export function App() {
         return;
       }
       if (msg.type === "done") {
+        const stderr: string = msg.stderr ?? "";
+        const exitCode: number = msg.exitCode ?? 0;
         setTrace(msg.trace ?? "");
         setTraceJson(msg.traceJson ?? "");
         setOutputIr(msg.outputIr ?? "");
-        setState((prev) =>
-          "tag" in prev
-            ? { kind: "done", tag: prev.tag, bytes: (msg.trace ?? "").length }
-            : prev,
-        );
+        // The driver exits non-zero on failure (e.g. IR parse error); surface
+        // its stderr (or a synthesized note) so the output pane shows the
+        // diagnostic instead of an empty editor.
+        if (exitCode !== 0) {
+          setRunError(stderr || `instcombine_driver exited with code ${exitCode}`);
+          setState((prev) =>
+            "tag" in prev
+              ? { kind: "runError", tag: prev.tag, message: stderr.split("\n")[0] || `exit ${exitCode}` }
+              : prev,
+          );
+        } else {
+          setRunError("");
+          setState((prev) =>
+            "tag" in prev
+              ? { kind: "done", tag: prev.tag, bytes: (msg.trace ?? "").length }
+              : prev,
+          );
+        }
         return;
       }
       if (msg.type === "error") {
+        const stderr: string = msg.stderr ?? "";
+        const combined = stderr ? `${msg.message}\n\n${stderr}` : msg.message;
+        setRunError(combined);
         setState((prev) =>
           "tag" in prev
             ? { kind: "runError", tag: prev.tag, message: msg.message }
@@ -237,6 +256,7 @@ export function App() {
     setTrace("");
     setTraceJson("");
     setOutputIr("");
+    setRunError("");
     workerRef.current.postMessage({ type: "run", ir });
   }, [ir, state]);
 
@@ -314,11 +334,11 @@ export function App() {
               <Panel defaultSize={40} minSize={15}>
                 <section className="pane">
                   <div className="pane-header">
-                    <span>output.ll (post-InstCombine)</span>
-                    <CopyButton text={outputIr} />
+                    <span>{runError ? "output.ll (driver error)" : "output.ll (post-InstCombine)"}</span>
+                    <CopyButton text={runError || outputIr} />
                   </div>
                   <div className="pane-body">
-                    <OutputIrPane ir={outputIr} />
+                    <OutputIrPane ir={outputIr} error={runError || undefined} />
                   </div>
                 </section>
               </Panel>
@@ -328,7 +348,7 @@ export function App() {
           <Panel defaultSize={50} minSize={20}>
             <section className="pane">
               <div className="pane-header">
-                <span>llvm_fuzz_info{viewMode === "structured" ? ".json" : ".txt"}</span>
+                <span>{viewMode === "structured" ? "Structured Trace" : "Plain-Text Trace"}</span>
                 {viewMode === "text" && (
                   <button
                     type="button"

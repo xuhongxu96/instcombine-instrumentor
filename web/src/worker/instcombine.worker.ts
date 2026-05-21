@@ -28,6 +28,10 @@ interface ActiveModule {
   id: string;
   promise: Promise<EmscriptenModule>;
   revokeUrls: string[];
+  // Filled by the module's `printErr` callback and drained per run. Lets the
+  // main thread show driver diagnostics (e.g. IR parse errors) in the UI
+  // instead of leaving them to the dev console.
+  stderr: string[];
 }
 
 declare const self: DedicatedWorkerGlobalScope;
@@ -63,13 +67,17 @@ async function loadFromSource(id: string, source: WasmSource): Promise<ActiveMod
 
   const mod = await import(/* @vite-ignore */ jsImportUrl);
   const createModule = (mod.default ?? mod) as (cfg: object) => Promise<EmscriptenModule>;
+  const stderr: string[] = [];
   const promise = createModule({
     noInitialRun: true,
     print: (s: string) => console.log("[wasm stdout]", s),
-    printErr: (s: string) => console.warn("[wasm stderr]", s),
+    printErr: (s: string) => {
+      console.warn("[wasm stderr]", s);
+      stderr.push(s);
+    },
     ...(locateFile ? { locateFile } : {}),
   });
-  return { id, promise, revokeUrls };
+  return { id, promise, revokeUrls, stderr };
 }
 
 function teardown(m: ActiveModule | null): void {
@@ -99,9 +107,10 @@ self.onmessage = async (e: MessageEvent<IncomingMessage>) => {
 
   if (msg.type === "run") {
     if (!active) {
-      self.postMessage({ type: "error", message: "no version loaded" });
+      self.postMessage({ type: "error", message: "no version loaded", stderr: "", exitCode: 0 });
       return;
     }
+    active.stderr.length = 0;
     try {
       const Module = await active.promise;
       try { Module.FS.mkdir("/work"); } catch { /* already exists */ }
@@ -111,15 +120,18 @@ self.onmessage = async (e: MessageEvent<IncomingMessage>) => {
         try { Module.FS.unlink(f); } catch { /* not present */ }
       }
 
-      Module.callMain([]);
-      Module.ccall("dump_iteration_info_external", null, [], []);
+      const exitCode = Module.callMain([]) ?? 0;
+      // Driver may have bailed before the runtime initialized anything worth
+      // dumping (e.g. IR parse failure); guard the flush so a crash here
+      // doesn't mask the real error in stderr.
+      try {
+        Module.ccall("dump_iteration_info_external", null, [], []);
+      } catch { /* runtime not in a flushable state */ }
 
       let trace = "";
       try {
         trace = Module.FS.readFile("/work/llvm_fuzz_info.txt", { encoding: "utf8" });
-      } catch {
-        trace = "(no trace produced — InstCombine made no changes, or the runtime failed to open the trace file)";
-      }
+      } catch { /* no trace file — either no changes, or driver bailed */ }
       let traceJson = "";
       try {
         traceJson = Module.FS.readFile("/work/llvm_fuzz_info.json", { encoding: "utf8" });
@@ -127,12 +139,21 @@ self.onmessage = async (e: MessageEvent<IncomingMessage>) => {
       let outputIr = "";
       try {
         outputIr = Module.FS.readFile("/work/output.ll", { encoding: "utf8" });
-      } catch { /* older wasm bundle won't emit /work/output.ll */ }
-      self.postMessage({ type: "done", trace, traceJson, outputIr });
+      } catch { /* older wasm bundle won't emit /work/output.ll, or driver bailed */ }
+      self.postMessage({
+        type: "done",
+        trace,
+        traceJson,
+        outputIr,
+        stderr: active.stderr.join("\n"),
+        exitCode,
+      });
     } catch (err) {
       self.postMessage({
         type: "error",
         message: err instanceof Error ? err.message : String(err),
+        stderr: active.stderr.join("\n"),
+        exitCode: -1,
       });
     }
   }
