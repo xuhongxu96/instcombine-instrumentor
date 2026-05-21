@@ -45,7 +45,8 @@ jobs:
           node web/scripts/build-manifest.mjs \
             --owner "${{ github.repository_owner }}" \
             --repo "${{ github.event.repository.name }}" \
-            --out-dir web/public/wasm
+            --out-dir web/public/wasm \
+            --include-file wasm-must-bundle.txt
 
       - name: Install frontend deps
         working-directory: web

@@ -1,25 +1,39 @@
 #!/usr/bin/env node
 // Build web/public/wasm/manifest.json from this repo's GitHub Releases.
 //
-// For each release whose assets include both `instcombine_driver.js` and
-// `instcombine_driver.wasm`:
-//   - the newest stable (non-prerelease) release per LLVM major version is
-//     downloaded into `<out-dir>/<slug>/` and recorded as a bundled entry,
-//     capped at --bundle-count entries total.
-//   - all other qualifying releases (older minor.patch in an already-bundled
-//     major, prereleases, anything beyond the cap) are recorded as remote
-//     entries pointing at the GitHub asset URL (the webapp fetches them on
-//     demand).
-// Releases whose assets do not include both files are filtered out entirely.
+// Bundling policy (qualifying = has both `instcombine_driver.js` and
+// `instcombine_driver.wasm` as assets):
+//   1. Force-include: any release whose tag appears in `--include-file` (or
+//      `--include <comma list>`) is bundled regardless of cap, dedupe, or
+//      prerelease flag. Use this to keep specific older minor.patch or
+//      prerelease versions selectable.
+//   2. Per-major newest: walk qualifying stable releases newest-first by
+//      semver, bundle the first one for each LLVM major version (the highest
+//      minor.patch wins).
+//   3. Fill remaining slots up to `--bundle-count` with the next-newest
+//      stable releases (older minor.patch of already-bundled majors), in the
+//      same newest-major-first / newest-minor-first order as step 2.
+// The cap from `--bundle-count` applies to auto-selected entries (steps 2+3);
+// force-included entries are extra and never displaced. Everything else
+// (releases not selected by any of the three passes) is dropped from the
+// manifest entirely.
+//
+// We don't emit on-demand "remote" entries because GitHub release-asset URLs
+// (both `github.com/.../releases/download/...` and the api.github.com asset
+// URL) redirect to `release-assets.githubusercontent.com`, which doesn't set
+// Access-Control-Allow-Origin — so a browser-side fetch can't load them
+// without a same-origin proxy. Older minor versions of an already-bundled
+// major simply don't appear in the version picker.
 //
 // CLI:
 //   node web/scripts/build-manifest.mjs \
 //     --owner <gh-owner> --repo <gh-repo> --out-dir <path> \
-//     [--bundle-count 10] [--api-base https://api.github.com]
+//     [--bundle-count 50] [--include <tag,tag>] [--include-file <path>] \
+//     [--api-base https://api.github.com]
 //
 // Reads GITHUB_TOKEN from env to raise the rate limit (works without it for small runs).
 
-import { mkdir, writeFile } from "node:fs/promises";
+import { mkdir, writeFile, readFile } from "node:fs/promises";
 import path from "node:path";
 import process from "node:process";
 
@@ -27,8 +41,9 @@ const args = parseArgs(process.argv.slice(2));
 const owner = required(args.owner, "--owner");
 const repo = required(args.repo, "--repo");
 const outDir = path.resolve(required(args["out-dir"], "--out-dir"));
-const bundleCount = Number(args["bundle-count"] ?? 10);
+const bundleCount = Number(args["bundle-count"] ?? 50);
 const apiBase = (args["api-base"] ?? "https://api.github.com").replace(/\/+$/, "");
+const includeTags = await loadIncludeTags(args.include, args["include-file"]);
 
 const JS_NAME = "instcombine_driver.js";
 const WASM_NAME = "instcombine_driver.wasm";
@@ -64,6 +79,36 @@ function required(value, name) {
 
 function slugify(tag) {
   return tag.replaceAll("/", "_");
+}
+
+// Parse the force-bundle list from `--include "tagA,tagB"` and/or
+// `--include-file <path>`. The file format is one tag per line; blank lines
+// and lines starting with `#` are ignored. Missing files are non-fatal (the
+// list is just empty).
+async function loadIncludeTags(inlineArg, filePathArg) {
+  const out = new Set();
+  if (typeof inlineArg === "string") {
+    for (const t of inlineArg.split(",")) {
+      const trimmed = t.trim();
+      if (trimmed) out.add(trimmed);
+    }
+  }
+  if (typeof filePathArg === "string") {
+    try {
+      const text = await readFile(filePathArg, "utf8");
+      for (const line of text.split("\n")) {
+        const trimmed = line.replace(/#.*$/, "").trim();
+        if (trimmed) out.add(trimmed);
+      }
+    } catch (err) {
+      if (err.code === "ENOENT") {
+        console.log(`include-file ${filePathArg} not found — proceeding with no force-includes`);
+      } else {
+        throw err;
+      }
+    }
+  }
+  return out;
 }
 
 const LLVM_TAG_RE = /llvmorg-(\d+)\.(\d+)\.(\d+)(?:-rc(\d+))?/;
@@ -164,20 +209,46 @@ async function main() {
   // date for tags that don't match the pattern.
   qualifying.sort(compareReleasesNewestFirst);
 
-  // Bundle at most one stable release per LLVM major version (newest minor.patch
-  // wins, thanks to the semver sort above), capped at bundleCount entries.
-  // Unparseable tags slip through the per-major dedupe (they have no major).
+  // Pass 1 — force-include any tag in the must-bundle list (no cap, no
+  // prerelease filter, no dedupe).
   const toBundle = new Set();
+  for (const q of qualifying) {
+    if (includeTags.has(q.release.tag_name)) toBundle.add(q.release.id);
+  }
+  for (const t of includeTags) {
+    if (!qualifying.some((q) => q.release.tag_name === t)) {
+      console.warn(`include: tag ${t} not found among qualifying releases (skipping)`);
+    }
+  }
+
+  // Pass 2 — per-major newest stable. Auto-picks count against bundleCount;
+  // force-included entries are extra. Older minor.patches of an already-seen
+  // major land in `deferred` for the fill pass.
   const seenMajors = new Set();
+  const deferred = [];
+  let autoCount = 0;
   for (const q of qualifying) {
     if (q.release.prerelease) continue;
-    if (toBundle.size >= bundleCount) break;
     const v = parseTagVersion(q.release.tag_name);
-    if (v) {
-      if (seenMajors.has(v.major)) continue;
-      seenMajors.add(v.major);
+    if (toBundle.has(q.release.id)) {
+      if (v) seenMajors.add(v.major);
+      continue;
     }
+    if (v && !seenMajors.has(v.major)) {
+      if (autoCount >= bundleCount) continue;
+      toBundle.add(q.release.id);
+      seenMajors.add(v.major);
+      autoCount++;
+    } else {
+      deferred.push(q);
+    }
+  }
+
+  // Pass 3 — fill remaining auto slots with deferred entries, newest first.
+  for (const q of deferred) {
+    if (autoCount >= bundleCount) break;
     toBundle.add(q.release.id);
+    autoCount++;
   }
 
   const releases = [];
@@ -185,39 +256,36 @@ async function main() {
     const tag = q.release.tag_name;
     const slug = slugify(tag);
     const isBundled = toBundle.has(q.release.id);
-    if (isBundled) {
-      const dir = path.join(outDir, slug);
-      await mkdir(dir, { recursive: true });
-      const jsPath = path.join(dir, JS_NAME);
-      const wasmPath = path.join(dir, WASM_NAME);
-      console.log(`bundling ${tag} → ${path.relative(process.cwd(), dir)}`);
-      const [jsBytes, wasmBytes] = await Promise.all([
-        downloadAsset(q.jsAsset, jsPath),
-        downloadAsset(q.wasmAsset, wasmPath),
-      ]);
-      console.log(`  ${JS_NAME} ${jsBytes}B, ${WASM_NAME} ${wasmBytes}B`);
-      releases.push({
-        tag,
-        name: q.release.name || tag,
-        slug,
-        publishedAt: q.release.published_at,
-        prerelease: q.release.prerelease,
-        bundled: true,
-        jsAsset: `${slug}/${JS_NAME}`,
-        wasmAsset: `${slug}/${WASM_NAME}`,
-      });
-    } else {
-      releases.push({
-        tag,
-        name: q.release.name || tag,
-        slug,
-        publishedAt: q.release.published_at,
-        prerelease: q.release.prerelease,
-        bundled: false,
-        jsAsset: q.jsAsset.browser_download_url,
-        wasmAsset: q.wasmAsset.browser_download_url,
-      });
+    if (!isBundled) {
+      // Cross-origin fetches of GitHub release assets fail CORS (the public
+      // download URL and the api.github.com asset URL both redirect to
+      // release-assets.githubusercontent.com, which omits
+      // Access-Control-Allow-Origin). Without a same-origin proxy the worker
+      // can't load these in-browser, so we drop them from the manifest rather
+      // than show a dropdown entry that would error at load time.
+      console.log(`skip ${tag}: not bundled (older minor.patch, prerelease, or beyond bundle cap)`);
+      continue;
     }
+    const dir = path.join(outDir, slug);
+    await mkdir(dir, { recursive: true });
+    const jsPath = path.join(dir, JS_NAME);
+    const wasmPath = path.join(dir, WASM_NAME);
+    console.log(`bundling ${tag} → ${path.relative(process.cwd(), dir)}`);
+    const [jsBytes, wasmBytes] = await Promise.all([
+      downloadAsset(q.jsAsset, jsPath),
+      downloadAsset(q.wasmAsset, wasmPath),
+    ]);
+    console.log(`  ${JS_NAME} ${jsBytes}B, ${WASM_NAME} ${wasmBytes}B`);
+    releases.push({
+      tag,
+      name: q.release.name || tag,
+      slug,
+      publishedAt: q.release.published_at,
+      prerelease: q.release.prerelease,
+      bundled: true,
+      jsAsset: `${slug}/${JS_NAME}`,
+      wasmAsset: `${slug}/${WASM_NAME}`,
+    });
   }
 
   const defaultTag =
