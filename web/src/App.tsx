@@ -3,6 +3,7 @@ import { Panel, PanelGroup, PanelResizeHandle } from "react-resizable-panels";
 import { Editor } from "./components/Editor";
 import { CopyButton, OutputIrPane } from "./components/OutputIrPane";
 import { TracePanel, type TraceViewMode } from "./components/TracePanel";
+import { useColorScheme, type ColorSchemePref } from "./components/useColorScheme";
 import { parseTraceJsonl } from "./trace/parse";
 import { llvmRefFromManifestTag } from "./trace/githubLink";
 import {
@@ -83,6 +84,7 @@ export function App() {
   const [selectedTag, setSelectedTag] = useState<string | null>(null);
   const [state, setState] = useState<WasmState>({ kind: "loadingManifest" });
   const [wordWrap, setWordWrap] = useState(true);
+  const { pref: colorPref, setPref: setColorPref } = useColorScheme();
   const workerRef = useRef<Worker | null>(null);
   const workerReadyRef = useRef(false);
   const pendingLoadRef = useRef<string | null>(null);
@@ -317,6 +319,18 @@ export function App() {
         </label>
         <button onClick={onRun} disabled={runDisabled}>Run</button>
         <span className="status">{statusText}</span>
+        <label className="theme-picker">
+          theme
+          <select
+            value={colorPref}
+            onChange={(e) => setColorPref(e.target.value as ColorSchemePref)}
+            title="color scheme"
+          >
+            <option value="system">system</option>
+            <option value="light">light</option>
+            <option value="dark">dark</option>
+          </select>
+        </label>
       </header>
       <main className="panes">
         <PanelGroup direction="horizontal" autoSaveId="instcombine-h">

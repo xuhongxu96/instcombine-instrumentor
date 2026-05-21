@@ -9,8 +9,9 @@
   --accent-bg: rgba(9, 105, 218, 0.12);
 }
 
+/* OS preference applies only when the user hasn't picked an explicit theme. */
 @media (prefers-color-scheme: dark) {
-  :root {
+  :root:not([data-theme="light"]) {
     --border: #30363d;
     --muted: #8b949e;
     --bg: #0d1117;
@@ -18,6 +19,27 @@
     --accent: #58a6ff;
     --accent-bg: rgba(88, 166, 255, 0.16);
   }
+}
+
+/* Manual overrides via the toolbar toggle. */
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --border: #30363d;
+  --muted: #8b949e;
+  --bg: #0d1117;
+  --bg-alt: #161b22;
+  --accent: #58a6ff;
+  --accent-bg: rgba(88, 166, 255, 0.16);
+}
+
+:root[data-theme="light"] {
+  color-scheme: light;
+  --border: #d0d7de;
+  --muted: #57606a;
+  --bg: #ffffff;
+  --bg-alt: #f6f8fa;
+  --accent: #0969da;
+  --accent-bg: rgba(9, 105, 218, 0.12);
 }
 
 * { box-sizing: border-box; }
@@ -48,14 +70,16 @@ html, body, #root { height: 100%; margin: 0; }
   cursor: pointer;
 }
 .toolbar button:disabled { opacity: 0.6; cursor: wait; }
-.version-picker {
+.version-picker,
+.theme-picker {
   display: inline-flex;
   align-items: center;
   gap: 0.4rem;
   font-size: 0.85rem;
   color: var(--muted);
 }
-.version-picker select {
+.version-picker select,
+.theme-picker select {
   padding: 0.25rem 0.5rem;
   border: 1px solid var(--border);
   background: var(--bg-alt);
@@ -65,7 +89,8 @@ html, body, #root { height: 100%; margin: 0; }
   color: inherit;
   cursor: pointer;
 }
-.version-picker select:disabled { opacity: 0.6; cursor: not-allowed; }
+.version-picker select:disabled,
+.theme-picker select:disabled { opacity: 0.6; cursor: not-allowed; }
 
 .panes {
   min-height: 0;

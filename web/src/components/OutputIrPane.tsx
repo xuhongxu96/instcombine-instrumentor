@@ -1,5 +1,6 @@
 import MonacoEditor, { type OnMount } from "@monaco-editor/react";
 import { useCallback, useState } from "react";
+import { monacoBuiltinTheme, useColorScheme } from "./useColorScheme";
 
 const PLACEHOLDER = "; run InstCombine to see the optimized IR";
 
@@ -9,6 +10,7 @@ interface Props {
 }
 
 export function OutputIrPane({ ir, error }: Props) {
+  const { scheme } = useColorScheme();
   const handleMount = useCallback<OnMount>((editor, _monaco) => {
     editor.revealLine(1);
   }, []);
@@ -22,7 +24,7 @@ export function OutputIrPane({ ir, error }: Props) {
       value={isError ? error : (ir || PLACEHOLDER)}
       defaultLanguage={isError ? "plaintext" : "llvm-ir"}
       onMount={handleMount}
-      theme="vs-dark"
+      theme={monacoBuiltinTheme(scheme)}
       options={{
         readOnly: true,
         domReadOnly: true,

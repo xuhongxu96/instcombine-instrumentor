@@ -1,5 +1,6 @@
 import MonacoEditor, { type OnMount } from "@monaco-editor/react";
 import { useCallback } from "react";
+import { monacoBuiltinTheme, useColorScheme } from "./useColorScheme";
 
 // Minimal Monarch tokenizer for LLVM IR. Covers the visual cues that matter:
 // keywords, types, %/@ identifiers, numbers, strings, and ;-comments.
@@ -81,6 +82,7 @@ export interface EditorProps {
 }
 
 export function Editor({ value, onChange }: EditorProps) {
+  const { scheme } = useColorScheme();
   const handleMount = useCallback<OnMount>((_editor, monaco) => {
     registerLlvmIr(monaco);
   }, []);
@@ -91,7 +93,7 @@ export function Editor({ value, onChange }: EditorProps) {
       onChange={(v) => onChange(v ?? "")}
       defaultLanguage="llvm-ir"
       onMount={handleMount}
-      theme="vs-dark"
+      theme={monacoBuiltinTheme(scheme)}
       options={{
         minimap: { enabled: false },
         fontSize: 13,

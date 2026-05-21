@@ -1,6 +1,7 @@
 import MonacoEditor, { type OnMount } from "@monaco-editor/react";
 import { useCallback } from "react";
 import { StructuredTraceView } from "./StructuredTraceView";
+import { useColorScheme } from "./useColorScheme";
 import type { Iteration } from "../trace/types";
 
 export type TraceViewMode = "text" | "structured";
@@ -16,6 +17,8 @@ interface TracePanelProps {
 const PLACEHOLDER = "— click Run to capture a trace —";
 
 const TRACE_LANG_ID = "instcombine-trace";
+const TRACE_THEME_DARK = "instcombine-trace-dark";
+const TRACE_THEME_LIGHT = "instcombine-trace-light";
 
 // Register a Monarch tokenizer + theme rules for the InstCombine trace output.
 // Idempotent: safe to call on every mount.
@@ -61,7 +64,7 @@ function registerTraceLang(monaco: typeof import("monaco-editor")) {
     },
   });
 
-  monaco.editor.defineTheme("instcombine-trace-dark", {
+  monaco.editor.defineTheme(TRACE_THEME_DARK, {
     base: "vs-dark",
     inherit: true,
     rules: [
@@ -77,13 +80,32 @@ function registerTraceLang(monaco: typeof import("monaco-editor")) {
     ],
     colors: {},
   });
+
+  // Light variant: same hues, darker shades so they read on a white background.
+  monaco.editor.defineTheme(TRACE_THEME_LIGHT, {
+    base: "vs",
+    inherit: true,
+    rules: [
+      { token: "trace-marker", foreground: "AF00DB", fontStyle: "bold" },
+      { token: "trace-section", foreground: "0451A5", fontStyle: "bold" },
+      { token: "trace-arrow", foreground: "AF5F00", fontStyle: "bold" },
+      { token: "trace-frame", foreground: "098658" },
+      { token: "trace-srcloc", foreground: "0451A5" },
+      { token: "trace-meta", foreground: "AF00DB" },
+      { token: "number.hex", foreground: "098658" },
+      { token: "keyword", foreground: "0000FF" },
+      { token: "comment", foreground: "008000", fontStyle: "italic" },
+    ],
+    colors: {},
+  });
 }
 
 export function TracePanel({ trace, wordWrap, viewMode, iterations, llvmRef }: TracePanelProps) {
+  const { scheme } = useColorScheme();
+  const traceTheme = scheme === "dark" ? TRACE_THEME_DARK : TRACE_THEME_LIGHT;
   const handleMount = useCallback<OnMount>((editor, monaco) => {
     registerTraceLang(monaco);
     monaco.editor.setModelLanguage(editor.getModel()!, TRACE_LANG_ID);
-    editor.updateOptions({ theme: "instcombine-trace-dark" });
     editor.revealLine(1);
   }, []);
 
@@ -96,7 +118,7 @@ export function TracePanel({ trace, wordWrap, viewMode, iterations, llvmRef }: T
       value={trace || PLACEHOLDER}
       defaultLanguage={TRACE_LANG_ID}
       onMount={handleMount}
-      theme="instcombine-trace-dark"
+      theme={traceTheme}
       options={{
         readOnly: true,
         domReadOnly: true,
