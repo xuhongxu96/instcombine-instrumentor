@@ -1,14 +1,23 @@
 # Release tags that must always be bundled into web/public/wasm/ at Pages-deploy
 # time, in addition to the default "newest stable per LLVM major version"
-# selection in web/scripts/build-manifest.mjs. One tag per line, lines starting
+# selection in web/scripts/build-manifest.mjs. One entry per line, lines starting
 # with `#` and blank lines are ignored.
 #
 # Why: cross-origin fetches of GitHub release assets fail CORS, so only bundled
-# (same-origin Pages) versions appear in the version picker. Force-include a
-# tag here when you want a specific older minor.patch (or a prerelease) to be
-# selectable even though the default per-major dedupe would skip it.
+# (same-origin Pages) versions appear in the version picker. Force-include an
+# entry here when you want a specific older minor.patch, prerelease, or commit
+# snapshot to be selectable even though the default per-pipeline picks would
+# skip it.
 #
-# Tag must match a release's GitHub tag_name exactly, e.g. `release/llvmorg-22.1.5`.
-# Entries here override --bundle-count (always bundled) but don't suppress the
-# per-major dedupe — i.e., the newest minor.patch of every major still gets
-# bundled regardless of what's listed here.
+# Accepted entry shapes:
+#   * Exact tag name — matched against a release's tag_name verbatim:
+#       release/llvmorg-22.1.5
+#       release/260520-abc123def456
+#   * Bare commit SHA (7-40 hex chars) — matched as a prefix against the 12-hex
+#     suffix of any release/<YYMMDD>-<12hex> commit-snapshot release. Use this
+#     when you know the LLVM commit but not its committer date:
+#       abc123def456
+#
+# Force-include entries override --bundle-count / --commit-count (always bundled,
+# never displaced) but don't suppress the per-major dedupe — i.e., the newest
+# minor.patch of every major still gets bundled regardless of what's listed here.

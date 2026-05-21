@@ -41,6 +41,7 @@ function fallbackManifest(): WasmManifest {
     tag: "(local build)",
     name: "(local build)",
     slug: "_local",
+    kind: "tag",
     publishedAt: now,
     prerelease: false,
     bundled: true,
@@ -83,6 +84,20 @@ export function App() {
     const map = new Map<string, WasmRelease>();
     if (manifest) for (const r of manifest.releases) map.set(r.tag, r);
     return map;
+  }, [manifest]);
+
+  const groupedReleases = useMemo(() => {
+    const tags: WasmRelease[] = [];
+    const commits: WasmRelease[] = [];
+    if (manifest) {
+      for (const r of manifest.releases) {
+        // `kind` is missing on manifests built before the split landed; treat
+        // those as tag releases so the picker still renders.
+        if (r.kind === "commit") commits.push(r);
+        else tags.push(r);
+      }
+    }
+    return { tags, commits };
   }, [manifest]);
 
   const requestLoad = useCallback((tag: string) => {
@@ -244,9 +259,26 @@ export function App() {
             onChange={onSelectChange}
             disabled={selectDisabled || !manifest || manifest.releases.length === 0}
           >
-            {manifest?.releases.map((r) => (
-              <option key={r.tag} value={r.tag}>{formatLabel(r)}</option>
-            )) ?? <option value="">(loading)</option>}
+            {manifest ? (
+              <>
+                {groupedReleases.tags.length > 0 && (
+                  <optgroup label="Tagged releases">
+                    {groupedReleases.tags.map((r) => (
+                      <option key={r.tag} value={r.tag}>{formatLabel(r)}</option>
+                    ))}
+                  </optgroup>
+                )}
+                {groupedReleases.commits.length > 0 && (
+                  <optgroup label="Commit snapshots">
+                    {groupedReleases.commits.map((r) => (
+                      <option key={r.tag} value={r.tag}>{formatLabel(r)}</option>
+                    ))}
+                  </optgroup>
+                )}
+              </>
+            ) : (
+              <option value="">(loading)</option>
+            )}
           </select>
         </label>
         <button onClick={onRun} disabled={runDisabled}>Run</button>

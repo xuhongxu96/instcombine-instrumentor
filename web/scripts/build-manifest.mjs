@@ -1,22 +1,33 @@
 #!/usr/bin/env node
 // Build web/public/wasm/manifest.json from this repo's GitHub Releases.
 //
-// Bundling policy (qualifying = has both `instcombine_driver.js` and
-// `instcombine_driver.wasm` as assets):
-//   1. Force-include: any release whose tag appears in `--include-file` (or
-//      `--include <comma list>`) is bundled regardless of cap, dedupe, or
-//      prerelease flag. Use this to keep specific older minor.patch or
-//      prerelease versions selectable.
-//   2. Per-major newest: walk qualifying stable releases newest-first by
-//      semver, bundle the first one for each LLVM major version (the highest
-//      minor.patch wins).
-//   3. Fill remaining slots up to `--bundle-count` with the next-newest
-//      stable releases (older minor.patch of already-bundled majors), in the
-//      same newest-major-first / newest-minor-first order as step 2.
-// The cap from `--bundle-count` applies to auto-selected entries (steps 2+3);
-// force-included entries are extra and never displaced. Everything else
-// (releases not selected by any of the three passes) is dropped from the
-// manifest entirely.
+// Two parallel bundling pipelines, keyed off the release tag shape:
+//
+//   * Tag releases — `release/llvmorg-X.Y.Z[-rcN]` from auto-release.yml or a
+//     tag-based manual-release. Three-pass selection:
+//       1. Force-include: any tag in `--include-file` / `--include <list>` is
+//          bundled regardless of cap, dedupe, or prerelease flag.
+//       2. Per-major newest: walk qualifying stable releases newest-first by
+//          semver, bundle the first one for each LLVM major (highest minor
+//          .patch wins).
+//       3. Fill remaining slots up to `--bundle-count` with the next-newest
+//          stable releases (older minor.patch of already-bundled majors) in
+//          the same order. Anything not picked is dropped.
+//
+//   * Commit releases — `release/<YYMMDD>-<12hex>` from a SHA-based manual
+//     -release. Bundle the newest `--commit-count` by publish date — they
+//     don't share a cap with tag releases and never displace them. Use this
+//     when releasing pre-tag LLVM snapshots; the UI puts them in their own
+//     dropdown section so they don't crowd the stable-version picker.
+//
+// Force-includes apply to both pipelines and accept two entry shapes:
+//   * Exact tag name — `release/llvmorg-22.1.5`, or `release/260520-abc123def456`
+//     for a specific commit snapshot.
+//   * Bare hex SHA (7-40 chars) — matched as a prefix against the 12-hex
+//     suffix of any commit-snapshot release. Ergonomic when you know the
+//     upstream commit but not its committer date.
+// Qualifying = has both `instcombine_driver.js` and `instcombine_driver.wasm`
+// as assets.
 //
 // We don't emit on-demand "remote" entries because GitHub release-asset URLs
 // (both `github.com/.../releases/download/...` and the api.github.com asset
@@ -28,7 +39,8 @@
 // CLI:
 //   node web/scripts/build-manifest.mjs \
 //     --owner <gh-owner> --repo <gh-repo> --out-dir <path> \
-//     [--bundle-count 50] [--include <tag,tag>] [--include-file <path>] \
+//     [--bundle-count 50] [--commit-count 10] \
+//     [--include <tag,tag>] [--include-file <path>] \
 //     [--api-base https://api.github.com]
 //
 // Reads GITHUB_TOKEN from env to raise the rate limit (works without it for small runs).
@@ -42,6 +54,7 @@ const owner = required(args.owner, "--owner");
 const repo = required(args.repo, "--repo");
 const outDir = path.resolve(required(args["out-dir"], "--out-dir"));
 const bundleCount = Number(args["bundle-count"] ?? 50);
+const commitCount = Number(args["commit-count"] ?? 10);
 const apiBase = (args["api-base"] ?? "https://api.github.com").replace(/\/+$/, "");
 const includeTags = await loadIncludeTags(args.include, args["include-file"]);
 
@@ -112,6 +125,9 @@ async function loadIncludeTags(inlineArg, filePathArg) {
 }
 
 const LLVM_TAG_RE = /llvmorg-(\d+)\.(\d+)\.(\d+)(?:-rc(\d+))?/;
+// Commit-snapshot tag shape produced by manual_release_tag.sh for SHA inputs:
+// release/<YYMMDD>-<first-12-of-full-SHA>.
+const COMMIT_TAG_RE = /^release\/(\d{6})-([0-9a-fA-F]{12})$/;
 
 // Extract semver-ish ordering key from a tag like "release/llvmorg-22.1.6"
 // or "release/llvmorg-22.1.0-rc3". Returns null if the tag doesn't match.
@@ -124,6 +140,10 @@ function parseTagVersion(tag) {
     patch: Number(m[3]),
     rc: m[4] === undefined ? null : Number(m[4]),
   };
+}
+
+function isCommitRelease(tag) {
+  return COMMIT_TAG_RE.test(tag);
 }
 
 // Newest-first comparator: parseable tags rank ahead of unparseable ones; ties
@@ -205,29 +225,56 @@ async function main() {
     qualifying.push({ release: r, jsAsset: js, wasmAsset: wasm });
   }
 
-  // Newest-first by tag semver (llvmorg-X.Y.Z[-rcN]); falls back to publish
-  // date for tags that don't match the pattern.
-  qualifying.sort(compareReleasesNewestFirst);
-
-  // Pass 1 — force-include any tag in the must-bundle list (no cap, no
-  // prerelease filter, no dedupe).
-  const toBundle = new Set();
+  // Split qualifying into two pipelines: commit snapshots (manual SHA-based
+  // releases) and tag releases (everything else — llvmorg-X.Y.Z and any other
+  // non-commit-shaped tags). They get bundled independently so a flood of
+  // commit snapshots can't displace the stable per-major picks, and vice versa.
+  const commitQualifying = [];
+  const tagQualifying = [];
   for (const q of qualifying) {
-    if (includeTags.has(q.release.tag_name)) toBundle.add(q.release.id);
+    if (isCommitRelease(q.release.tag_name)) commitQualifying.push(q);
+    else tagQualifying.push(q);
   }
+  tagQualifying.sort(compareReleasesNewestFirst);
+  commitQualifying.sort((a, b) =>
+    new Date(b.release.published_at).getTime() -
+    new Date(a.release.published_at).getTime(),
+  );
+
+  // Pass 1 — force-include any entry from the must-bundle list (no cap, no
+  // prerelease filter, no dedupe). Applies to both pipelines. Entries match
+  // either by exact `tag_name` (e.g. `release/llvmorg-22.1.5` or the full
+  // `release/<YYMMDD>-<12hex>` commit-snapshot tag) OR — if the entry is a
+  // bare 7-40 hex string — as a prefix against the 12-hex suffix of any
+  // commit-snapshot release. The SHA-prefix form is the ergonomic option
+  // since you usually know the upstream commit but not its committer date.
+  const HEX_SHA_RE = /^[0-9a-fA-F]{7,40}$/;
+  const toBundle = new Set();
   for (const t of includeTags) {
-    if (!qualifying.some((q) => q.release.tag_name === t)) {
-      console.warn(`include: tag ${t} not found among qualifying releases (skipping)`);
+    let matched;
+    if (HEX_SHA_RE.test(t)) {
+      const tLower = t.toLowerCase();
+      matched = qualifying.filter((q) => {
+        const m = COMMIT_TAG_RE.exec(q.release.tag_name);
+        return m && m[2].toLowerCase().startsWith(tLower);
+      });
+    } else {
+      matched = qualifying.filter((q) => q.release.tag_name === t);
     }
+    if (matched.length === 0) {
+      console.warn(`include: ${t} did not match any qualifying release (skipping)`);
+      continue;
+    }
+    for (const q of matched) toBundle.add(q.release.id);
   }
 
-  // Pass 2 — per-major newest stable. Auto-picks count against bundleCount;
-  // force-included entries are extra. Older minor.patches of an already-seen
-  // major land in `deferred` for the fill pass.
+  // Pass 2 — per-major newest stable from tagQualifying. Auto-picks count
+  // against bundleCount; force-included entries are extra. Older minor.patches
+  // of an already-seen major land in `deferred` for the fill pass.
   const seenMajors = new Set();
   const deferred = [];
   let autoCount = 0;
-  for (const q of qualifying) {
+  for (const q of tagQualifying) {
     if (q.release.prerelease) continue;
     const v = parseTagVersion(q.release.tag_name);
     if (toBundle.has(q.release.id)) {
@@ -244,33 +291,37 @@ async function main() {
     }
   }
 
-  // Pass 3 — fill remaining auto slots with deferred entries, newest first.
+  // Pass 3 — fill remaining tag slots with deferred entries, newest first.
   for (const q of deferred) {
     if (autoCount >= bundleCount) break;
     toBundle.add(q.release.id);
     autoCount++;
   }
 
+  // Pass 4 — always bundle the newest `commitCount` commit snapshots by
+  // publish date. Independent of bundleCount; force-included commit snapshots
+  // are already in `toBundle` from Pass 1 and don't consume slots here.
+  let commitAutoCount = 0;
+  for (const q of commitQualifying) {
+    if (toBundle.has(q.release.id)) continue;
+    if (commitAutoCount >= commitCount) break;
+    toBundle.add(q.release.id);
+    commitAutoCount++;
+  }
+
+  // Emit tag entries first (newest-semver order), then commit entries (newest
+  // publish-date order). The App.tsx dropdown groups by `kind`; this ordering
+  // keeps each group internally sorted and makes the default-tag picker land
+  // on the highest stable llvmorg.
   const releases = [];
-  for (const q of qualifying) {
+  const emit = async (q, kind) => {
     const tag = q.release.tag_name;
     const slug = slugify(tag);
-    const isBundled = toBundle.has(q.release.id);
-    if (!isBundled) {
-      // Cross-origin fetches of GitHub release assets fail CORS (the public
-      // download URL and the api.github.com asset URL both redirect to
-      // release-assets.githubusercontent.com, which omits
-      // Access-Control-Allow-Origin). Without a same-origin proxy the worker
-      // can't load these in-browser, so we drop them from the manifest rather
-      // than show a dropdown entry that would error at load time.
-      console.log(`skip ${tag}: not bundled (older minor.patch, prerelease, or beyond bundle cap)`);
-      continue;
-    }
     const dir = path.join(outDir, slug);
     await mkdir(dir, { recursive: true });
     const jsPath = path.join(dir, JS_NAME);
     const wasmPath = path.join(dir, WASM_NAME);
-    console.log(`bundling ${tag} → ${path.relative(process.cwd(), dir)}`);
+    console.log(`bundling ${tag} (${kind}) → ${path.relative(process.cwd(), dir)}`);
     const [jsBytes, wasmBytes] = await Promise.all([
       downloadAsset(q.jsAsset, jsPath),
       downloadAsset(q.wasmAsset, wasmPath),
@@ -280,15 +331,32 @@ async function main() {
       tag,
       name: q.release.name || tag,
       slug,
+      kind,
       publishedAt: q.release.published_at,
       prerelease: q.release.prerelease,
       bundled: true,
       jsAsset: `${slug}/${JS_NAME}`,
       wasmAsset: `${slug}/${WASM_NAME}`,
     });
+  };
+  for (const q of tagQualifying) {
+    if (!toBundle.has(q.release.id)) {
+      console.log(`skip ${q.release.tag_name}: not bundled (older minor.patch, prerelease, or beyond bundle cap)`);
+      continue;
+    }
+    await emit(q, "tag");
+  }
+  for (const q of commitQualifying) {
+    if (!toBundle.has(q.release.id)) {
+      console.log(`skip ${q.release.tag_name}: not bundled (beyond commit-count cap)`);
+      continue;
+    }
+    await emit(q, "commit");
   }
 
+  // Default selection prefers stable tag releases over commit snapshots.
   const defaultTag =
+    releases.find((r) => r.bundled && r.kind === "tag" && !r.prerelease)?.tag ??
     releases.find((r) => r.bundled && !r.prerelease)?.tag ??
     releases[0]?.tag ??
     null;

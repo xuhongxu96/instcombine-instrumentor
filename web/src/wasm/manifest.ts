@@ -6,10 +6,16 @@ export type WasmSource =
   | { kind: "bundled"; jsUrl: string; wasmUrl: string }
   | { kind: "remote"; jsUrl: string; wasmUrl: string };
 
+// Tag releases come from llvmorg-* tags (auto- or tag-based manual releases).
+// Commit snapshots come from SHA-based manual releases and live in their own
+// dropdown section in the UI so they don't crowd the stable picker.
+export type WasmReleaseKind = "tag" | "commit";
+
 export interface WasmRelease {
   tag: string;
   name: string;
   slug: string;
+  kind: WasmReleaseKind;
   publishedAt: string;
   prerelease: boolean;
   bundled: boolean;
