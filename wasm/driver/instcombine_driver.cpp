@@ -11,6 +11,7 @@
 #include "llvm/IR/PassManager.h"
 #include "llvm/IRReader/IRReader.h"
 #include "llvm/Passes/PassBuilder.h"
+#include "llvm/Support/FileSystem.h"
 #include "llvm/Support/SourceMgr.h"
 #include "llvm/Support/raw_ostream.h"
 #include "llvm/Transforms/InstCombine/InstCombine.h"
@@ -43,6 +44,16 @@ int main(int /*argc*/, char ** /*argv*/) {
   llvm::ModulePassManager MPM;
   MPM.addPass(llvm::createModuleToFunctionPassAdaptor(std::move(FPM)));
   MPM.run(*M, MAM);
+
+  // Serialize the post-pass module so the webapp can show the optimized IR.
+  std::error_code EC;
+  llvm::raw_fd_ostream OutLL("/work/output.ll", EC, llvm::sys::fs::OF_Text);
+  if (!EC) {
+    M->print(OutLL, /*AAW=*/nullptr);
+  } else {
+    llvm::errs() << "instcombine_driver: failed to write /work/output.ll: "
+                 << EC.message() << "\n";
+  }
 
   return 0;
 }

@@ -3,6 +3,7 @@ set -euo pipefail
 
 OPT_BIN=${OPT_BIN:-build/llvm-rel/bin/opt}
 TRACE_FILE=${TRACE_FILE:-llvm_fuzz_info.txt}
+TRACE_JSON=${TRACE_JSON:-llvm_fuzz_info.json}
 SMOKE_IR=${SMOKE_IR:-$(mktemp --suffix=.ll)}
 
 cat > "$SMOKE_IR" <<'EOF'
@@ -12,7 +13,7 @@ define i32 @f(i32 %x) {
 }
 EOF
 
-rm -f "$TRACE_FILE"
+rm -f "$TRACE_FILE" "$TRACE_JSON"
 "$OPT_BIN" -passes=instcombine "$SMOKE_IR" -S -o /dev/null
 
 if [ ! -s "$TRACE_FILE" ]; then
@@ -58,6 +59,39 @@ if [ -f "$VISITADD_SOURCE" ]; then
         echo "WARN: could not extract visitAdd lines for call-site assertion (sig=$VISITADD_SIG_LINE trace=$VISITADD_TRACE_LINE) — skipping"
     fi
 fi
+
+# JSONL sidecar must exist, parse as one object per line, and carry the
+# enriched fields (opcode/parent_fn/rule) on at least one new value.
+if [ ! -s "$TRACE_JSON" ]; then
+    echo "FAIL: $TRACE_JSON missing or empty"
+    exit 1
+fi
+python3 - "$TRACE_JSON" <<'PY' || exit 1
+import json, sys
+path = sys.argv[1]
+n_iter = 0
+saw_opcode = False
+saw_rule = False
+with open(path) as fh:
+    for lineno, line in enumerate(fh, 1):
+        line = line.strip()
+        if not line:
+            continue
+        obj = json.loads(line)
+        assert isinstance(obj, dict), f"line {lineno} not an object"
+        for k in ("iteration", "new_values", "replacements"):
+            assert k in obj, f"line {lineno} missing key {k!r}"
+        for v in obj["new_values"]:
+            for k in ("ptr", "ir", "opcode", "parent_fn", "rule", "frames"):
+                assert k in v, f"line {lineno} value missing key {k!r}"
+            if v["opcode"]: saw_opcode = True
+            if v["rule"]: saw_rule = True
+        n_iter += 1
+assert n_iter > 0, "no iterations in JSONL"
+assert saw_opcode, "no new value had opcode populated"
+assert saw_rule, "no new value had rule populated"
+print(f"JSONL sidecar OK: {n_iter} iteration(s); opcode + rule populated")
+PY
 
 echo "Smoke test passed; trace size: $(wc -c < "$TRACE_FILE") bytes"
 head -50 "$TRACE_FILE"

@@ -1,6 +1,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Panel, PanelGroup, PanelResizeHandle } from "react-resizable-panels";
 import { Editor } from "./components/Editor";
-import { TracePanel } from "./components/TracePanel";
+import { CopyButton, OutputIrPane } from "./components/OutputIrPane";
+import { TracePanel, type TraceViewMode } from "./components/TracePanel";
+import { parseTraceJsonl } from "./trace/parse";
 import {
   releaseToSource,
   type WasmManifest,
@@ -71,6 +74,9 @@ function formatLabel(r: WasmRelease): string {
 export function App() {
   const [ir, setIr] = useState(DEFAULT_IR);
   const [trace, setTrace] = useState("");
+  const [traceJson, setTraceJson] = useState("");
+  const [outputIr, setOutputIr] = useState("");
+  const [viewMode, setViewMode] = useState<TraceViewMode>("text");
   const [manifest, setManifest] = useState<WasmManifest | null>(null);
   const [selectedTag, setSelectedTag] = useState<string | null>(null);
   const [state, setState] = useState<WasmState>({ kind: "loadingManifest" });
@@ -79,6 +85,8 @@ export function App() {
   const workerReadyRef = useRef(false);
   const pendingLoadRef = useRef<string | null>(null);
   const lastLoadRequestRef = useRef<string | null>(null);
+
+  const iterations = useMemo(() => parseTraceJsonl(traceJson), [traceJson]);
 
   const releaseByTag = useMemo(() => {
     const map = new Map<string, WasmRelease>();
@@ -177,10 +185,12 @@ export function App() {
         return;
       }
       if (msg.type === "done") {
-        setTrace(msg.trace);
+        setTrace(msg.trace ?? "");
+        setTraceJson(msg.traceJson ?? "");
+        setOutputIr(msg.outputIr ?? "");
         setState((prev) =>
           "tag" in prev
-            ? { kind: "done", tag: prev.tag, bytes: msg.trace.length }
+            ? { kind: "done", tag: prev.tag, bytes: (msg.trace ?? "").length }
             : prev,
         );
         return;
@@ -223,6 +233,8 @@ export function App() {
     if (state.kind !== "ready" && state.kind !== "done" && state.kind !== "runError") return;
     setState({ kind: "running", tag: state.tag });
     setTrace("");
+    setTraceJson("");
+    setOutputIr("");
     workerRef.current.postMessage({ type: "run", ir });
   }, [ir, state]);
 
@@ -285,28 +297,74 @@ export function App() {
         <span className="status">{statusText}</span>
       </header>
       <main className="panes">
-        <section className="pane">
-          <div className="pane-header">LLVM IR</div>
-          <div className="pane-body">
-            <Editor value={ir} onChange={setIr} />
-          </div>
-        </section>
-        <section className="pane">
-          <div className="pane-header">
-            <span>llvm_fuzz_info.txt</span>
-            <button
-              type="button"
-              className="pane-header-button"
-              onClick={() => setWordWrap((w) => !w)}
-              title="Toggle word wrap"
-            >
-              {wordWrap ? "wrap: on" : "wrap: off"}
-            </button>
-          </div>
-          <div className="pane-body">
-            <TracePanel trace={trace} wordWrap={wordWrap} />
-          </div>
-        </section>
+        <PanelGroup direction="horizontal" autoSaveId="instcombine-h">
+          <Panel defaultSize={50} minSize={20}>
+            <PanelGroup direction="vertical" autoSaveId="instcombine-left-v">
+              <Panel defaultSize={60} minSize={20}>
+                <section className="pane">
+                  <div className="pane-header">LLVM IR</div>
+                  <div className="pane-body">
+                    <Editor value={ir} onChange={setIr} />
+                  </div>
+                </section>
+              </Panel>
+              <PanelResizeHandle className="pane-resize-handle horizontal" />
+              <Panel defaultSize={40} minSize={15}>
+                <section className="pane">
+                  <div className="pane-header">
+                    <span>output.ll (post-InstCombine)</span>
+                    <CopyButton text={outputIr} />
+                  </div>
+                  <div className="pane-body">
+                    <OutputIrPane ir={outputIr} />
+                  </div>
+                </section>
+              </Panel>
+            </PanelGroup>
+          </Panel>
+          <PanelResizeHandle className="pane-resize-handle vertical" />
+          <Panel defaultSize={50} minSize={20}>
+            <section className="pane">
+              <div className="pane-header">
+                <span>llvm_fuzz_info{viewMode === "structured" ? ".json" : ".txt"}</span>
+                {viewMode === "text" && (
+                  <button
+                    type="button"
+                    className="pane-header-button"
+                    onClick={() => setWordWrap((w) => !w)}
+                    title="Toggle word wrap"
+                  >
+                    {wordWrap ? "wrap: on" : "wrap: off"}
+                  </button>
+                )}
+                <div className="view-mode-toggle" role="tablist" aria-label="view mode">
+                  <button
+                    type="button"
+                    role="tab"
+                    aria-selected={viewMode === "text"}
+                    className={`pane-header-button ${viewMode === "text" ? "active" : ""}`}
+                    onClick={() => setViewMode("text")}
+                  >text</button>
+                  <button
+                    type="button"
+                    role="tab"
+                    aria-selected={viewMode === "structured"}
+                    className={`pane-header-button ${viewMode === "structured" ? "active" : ""}`}
+                    onClick={() => setViewMode("structured")}
+                  >structured</button>
+                </div>
+              </div>
+              <div className="pane-body">
+                <TracePanel
+                  trace={trace}
+                  wordWrap={wordWrap}
+                  viewMode={viewMode}
+                  iterations={iterations}
+                />
+              </div>
+            </section>
+          </Panel>
+        </PanelGroup>
       </main>
     </div>
   );

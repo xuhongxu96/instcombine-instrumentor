@@ -5,6 +5,8 @@
   --muted: #57606a;
   --bg: #ffffff;
   --bg-alt: #f6f8fa;
+  --accent: #0969da;
+  --accent-bg: rgba(9, 105, 218, 0.12);
 }
 
 @media (prefers-color-scheme: dark) {
@@ -13,6 +15,8 @@
     --muted: #8b949e;
     --bg: #0d1117;
     --bg-alt: #161b22;
+    --accent: #58a6ff;
+    --accent-bg: rgba(88, 166, 255, 0.16);
   }
 }
 
@@ -64,12 +68,11 @@ html, body, #root { height: 100%; margin: 0; }
 .version-picker select:disabled { opacity: 0.6; cursor: not-allowed; }
 
 .panes {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
   min-height: 0;
+  display: flex;
+  flex-direction: column;
 }
-.pane { display: flex; flex-direction: column; min-height: 0; }
-.pane + .pane { border-left: 1px solid var(--border); }
+.pane { display: flex; flex-direction: column; min-height: 0; height: 100%; }
 .pane-header {
   display: flex;
   align-items: center;
@@ -81,8 +84,8 @@ html, body, #root { height: 100%; margin: 0; }
   background: var(--bg-alt);
   min-height: 34px;
 }
+.pane-header > span:first-child { margin-right: auto; }
 .pane-header-button {
-  margin: 0 0 0 auto;
   padding: 0.1rem 0.5rem;
   font: inherit;
   font-size: 0.75rem;
@@ -92,5 +95,280 @@ html, body, #root { height: 100%; margin: 0; }
   border-radius: 3px;
   cursor: pointer;
 }
-.pane-header-button:hover { color: inherit; }
+.pane-header-button:hover:not(:disabled) { color: inherit; }
+.pane-header-button:disabled { opacity: 0.5; cursor: not-allowed; }
+.pane-header-button.active {
+  background: var(--accent-bg);
+  border-color: var(--accent);
+  color: var(--accent);
+}
 .pane-body { flex: 1; min-height: 0; overflow: hidden; }
+
+.view-mode-toggle {
+  display: inline-flex;
+  gap: 0;
+}
+.view-mode-toggle .pane-header-button {
+  border-radius: 0;
+}
+.view-mode-toggle .pane-header-button:first-child {
+  border-top-left-radius: 3px;
+  border-bottom-left-radius: 3px;
+}
+.view-mode-toggle .pane-header-button + .pane-header-button {
+  /* Overlap the previous button's right border so we render a single 1px
+     divider, while still giving each button a full 4-edge border. That way
+     the .active highlight can light up the left edge of the right button. */
+  margin-left: -1px;
+}
+.view-mode-toggle .pane-header-button:last-child {
+  border-top-right-radius: 3px;
+  border-bottom-right-radius: 3px;
+}
+.view-mode-toggle .pane-header-button.active {
+  /* Lift the active button so its border draws on top of its neighbour. */
+  position: relative;
+  z-index: 1;
+}
+
+/* Resize handles from react-resizable-panels */
+.pane-resize-handle {
+  background: var(--border);
+  flex-shrink: 0;
+  transition: background 0.12s;
+}
+.pane-resize-handle.vertical {
+  width: 4px;
+  cursor: col-resize;
+}
+.pane-resize-handle.horizontal {
+  height: 4px;
+  cursor: row-resize;
+}
+.pane-resize-handle:hover,
+.pane-resize-handle[data-resize-handle-active] {
+  background: var(--accent);
+}
+
+/* Structured trace view */
+.structured-trace {
+  height: 100%;
+  overflow: auto;
+  padding: 0.5rem 0.75rem 2rem;
+  font-family: -apple-system, "Segoe UI", Roboto, sans-serif;
+  font-size: 13px;
+}
+
+.trace-filter-bar {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  display: flex;
+  gap: 0.4rem;
+  flex-wrap: wrap;
+  padding: 0.4rem 0;
+  background: var(--bg);
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 0.5rem;
+}
+.trace-filter-bar input[type="search"] {
+  flex: 1 1 120px;
+  min-width: 90px;
+  padding: 0.25rem 0.5rem;
+  font: inherit;
+  font-size: 0.85rem;
+  color: inherit;
+  background: var(--bg-alt);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+}
+.trace-filter-bar .filter-clear {
+  padding: 0.2rem 0.6rem;
+  font: inherit;
+  font-size: 0.8rem;
+  color: var(--muted);
+  background: var(--bg-alt);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.trace-empty {
+  padding: 1rem;
+  color: var(--muted);
+  font-style: italic;
+  text-align: center;
+}
+
+.trace-iteration {
+  margin: 0.4rem 0 0.8rem;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg-alt);
+}
+.trace-iteration > summary {
+  list-style: none;
+  cursor: pointer;
+  padding: 0.4rem 0.7rem;
+  display: flex;
+  gap: 0.5rem;
+  align-items: baseline;
+  user-select: none;
+}
+.trace-iteration > summary::-webkit-details-marker { display: none; }
+.trace-iteration > summary::before {
+  content: "▶";
+  font-size: 0.65rem;
+  color: var(--muted);
+  display: inline-block;
+  transition: transform 0.12s;
+}
+.trace-iteration[open] > summary::before { transform: rotate(90deg); }
+.iter-num { font-weight: 600; }
+.iter-counts { color: var(--muted); font-size: 0.85rem; }
+
+.iter-section { padding: 0 0.7rem 0.7rem; }
+.iter-section h4 {
+  margin: 0.7rem 0 0.3rem;
+  font-size: 0.8rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--muted);
+  font-weight: 600;
+}
+
+.trace-cards {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+.trace-card {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  padding: 0.5rem 0.7rem;
+  scroll-margin: 60px;
+}
+.trace-card.flash {
+  animation: card-flash 1.2s ease-out;
+}
+@keyframes card-flash {
+  0% { box-shadow: 0 0 0 3px var(--accent); }
+  100% { box-shadow: 0 0 0 0 transparent; }
+}
+.trace-card-header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.35rem;
+  margin-bottom: 0.35rem;
+}
+.trace-card-ptr {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.8rem;
+  color: var(--muted);
+}
+.trace-card-meta {
+  font-size: 0.78rem;
+  color: var(--muted);
+  margin-top: 0.3rem;
+}
+.trace-card-meta code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.78rem;
+}
+.meta-loc { opacity: 0.85; }
+
+.trace-pill {
+  display: inline-flex;
+  align-items: center;
+  padding: 0.05rem 0.45rem;
+  border-radius: 999px;
+  font-size: 0.72rem;
+  font-weight: 500;
+  background: var(--bg-alt);
+  border: 1px solid var(--border);
+  color: inherit;
+}
+.trace-pill.opcode { background: rgba(151, 195, 235, 0.15); border-color: #4a8fcf; color: #58a6ff; }
+.trace-pill.fn     { background: rgba(180, 144, 226, 0.15); border-color: #8c6fbb; color: #c586c0; }
+.trace-pill.rule   { background: rgba(245, 184, 100, 0.15); border-color: #b18043; color: #d7ba7d; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+.trace-pill.dbg    { background: rgba(120, 180, 120, 0.15); border-color: #5a8a5a; color: #b5cea8; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+.trace-pill-bb {
+  opacity: 0.7;
+  margin-left: 0.1rem;
+  font-weight: 400;
+}
+
+.ir-text {
+  margin: 0;
+  padding: 0.35rem 0.55rem;
+  background: var(--bg-alt);
+  border-radius: 4px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.82rem;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.ir-text-inline {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.8rem;
+  background: var(--bg-alt);
+  padding: 0.05rem 0.35rem;
+  border-radius: 3px;
+}
+
+.trace-frames {
+  margin-top: 0.35rem;
+  font-size: 0.78rem;
+}
+.trace-frames > summary {
+  cursor: pointer;
+  color: var(--muted);
+  user-select: none;
+}
+.trace-frames ol {
+  margin: 0.3rem 0 0;
+  padding-left: 1.5rem;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.78rem;
+}
+.trace-frames li { margin: 0.1rem 0; }
+.frame-name { color: #c586c0; }
+.frame-loc { color: var(--muted); }
+
+.trace-replacements {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+}
+.trace-replacement-row {
+  display: grid;
+  grid-template-columns: 1fr auto 1fr;
+  gap: 0.5rem;
+  align-items: center;
+  padding: 0.35rem 0.5rem;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+}
+.rep-side {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+  align-items: center;
+  min-width: 0;
+}
+.rep-arrow {
+  color: #d7ba7d;
+  font-weight: 700;
+}
+.ptr-link {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.78rem;
+  color: var(--accent);
+  cursor: pointer;
+  text-decoration: underline;
+  text-decoration-style: dotted;
+}
+.ptr-link:hover { text-decoration-style: solid; }

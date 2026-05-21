@@ -57,11 +57,12 @@ The runtime source lives at `runtime/fuzz_runtime.{h,cpp}` and is copied into th
 
 ### Trace format
 
-`llvm_fuzz_info.txt` is append-only, segmented by `=== SESSION START ===` (per process) and `=== ITERATION START === / === ITERATION END ===` (per InstCombine fixed-point iteration). Each iteration has two sections:
+`llvm_fuzz_info.txt` is append-only, segmented by `=== SESSION START ===` (per process) and `=== ITERATION <N> START === / === ITERATION END ===` (per InstCombine fixed-point iteration; `<N>` is a 1-based counter bumped in `start_iteration()`). Each iteration has two sections:
 
 ```text
 NEW INSTRUCTIONS IN THIS ITERATION:
 VALUE 0x55ef...46d0 (i32 %x) at llvm::Value *simplifyAddInst(...) (InstructionSimplify.cpp:622):
+ [opcode=add] [fn=f/entry] [rule=llvm::Instruction *llvm::InstCombinerImpl::visitAdd(...)]
  #1 llvm::Value *llvm::simplifyAddInst(...)        at InstructionSimplify.cpp:676
  #2 llvm::Instruction *llvm::InstCombinerImpl::visitAdd(...) at InstCombineAddSub.cpp:1556
  #3 bool llvm::InstCombinerImpl::run()             at InstructionCombining.cpp:5679
@@ -71,18 +72,43 @@ REPLACEMENTS IN THIS ITERATION:
 ```
 
 - The `VALUE … at <func> (<file>:<line>)` header is frame `#0` — the function that produced the value and the source line of the wrapping `__llvm_fuzz_record(...)` return.
+- The `[opcode=…] [fn=… / bb=…] [rule=…] [dbg=…]` meta line appears for instruction-typed values: opcode name, the containing user IR function (and basic block), the rule that fired (innermost stack frame from `lib/Transforms/InstCombine/`), and the value's `DebugLoc` if the user IR carries DI metadata. Any missing field is omitted; the whole line is omitted when every field would be empty.
 - `#1, #2, …` are call sites walking outward: each frame's func is the *caller's* `__PRETTY_FUNCTION__`, the file/line is the call expression where it dispatched to the next callee in.
 - `REPLACEMENTS` lists every `Value::doRAUW` performed during the iteration. Cross-reference a pointer (e.g. `0x55ef...46d0`) between the two sections to see which new value participated in which replacement.
 
+### JSONL sidecar
+
+Alongside the text dump, the runtime writes `llvm_fuzz_info.json` in JSON Lines format (one object per iteration, newline-terminated). The webapp's "structured" view consumes this; terminal users can ignore it. Schema:
+
+```jsonc
+{
+  "iteration": 1,
+  "new_values": [
+    { "ptr": "0x55…", "ir": "%a = add i32 %x, 0",
+      "opcode": "add", "parent_fn": "f", "parent_bb": "entry",
+      "debug_loc": "src.c:3:5", "rule": "llvm::...visitAdd(...)",
+      "loc": "Value.cpp:1234", "func_name": "...",
+      "frames": [{ "name": "...", "file": "...", "line": 42 }] }
+  ],
+  "replacements": [
+    { "old_ptr": "0x55…", "new_ptr": "0x55…",
+      "old_ir": "  %a = add i32 %x, 0", "new_ir": "i32 %x",
+      "old_opcode": "add", "new_opcode": "" }
+  ]
+}
+```
+
+JSONL (not a single JSON document) matches the existing append-on-each-iteration write model: a process that dies mid-iteration leaves an unfinished trailing line, but every prior iteration remains parseable. The webapp's `web/src/trace/parse.ts` defensively skips malformed lines. Pointers are emitted as `"0x<hex>"` strings so they double as DOM ids / anchor targets in the structured view.
+
 ## WebAssembly build (webapp at `web/`)
 
-The repo also produces an in-browser InstCombine debugger: `web/` is a Vite + React + Monaco SPA that loads a wasm InstCombine driver, runs it on user-pasted IR, and renders the resulting `llvm_fuzz_info.txt`. Build pipeline:
+The repo also produces an in-browser InstCombine debugger: `web/` is a Vite + React + Monaco SPA that loads a wasm InstCombine driver, runs it on user-pasted IR, and shows the optimized IR plus the resulting `llvm_fuzz_info.txt`. The layout is three resizable panes (`react-resizable-panels`): input IR top-left, post-pass `output.ll` bottom-left, trace on the right. The trace pane has a Text / Structured toggle — "Structured" parses `llvm_fuzz_info.json` and renders collapsible iterations with opcode/rule/function pills, replacement rows with clickable pointer cross-links, and a filter bar (text / opcode / rule / function). Build pipeline:
 
-- `wasm/driver/instcombine_driver.cpp` — ~50-line custom driver that parses `/work/input.ll`, registers PassBuilder analyses, and runs `createModuleToFunctionPassAdaptor(InstCombinePass())`. Not the full `opt` binary — keeps the wasm small.
+- `wasm/driver/instcombine_driver.cpp` — ~60-line custom driver that parses `/work/input.ll`, registers PassBuilder analyses, runs `createModuleToFunctionPassAdaptor(InstCombinePass())`, then serializes the post-pass module to `/work/output.ll` via `Module::print` so the webapp can read it back. Not the full `opt` binary — keeps the wasm small. (Native `opt` keeps printing IR to stdout when run with `-S`, so it doesn't need the same sidecar.)
 - `wasm/driver/CMakeLists.txt` — wired into the LLVM build via `LLVM_EXTERNAL_PROJECTS=instcombine_driver`. Emits an ES-module `.js` loader + `.wasm` sidecar.
 - `build_wasm.sh` — two-stage cross-compile: native `llvm-tblgen` at `build/llvm-host/` (LLVM's wasm build can't run tblgen itself), then `emcmake cmake` at `build/llvm-wasm/` with `LLVM_TARGETS_TO_BUILD=""` and `LLVM_ENABLE_THREADS=OFF` (no `SharedArrayBuffer`/COOP+COEP on Pages). Outputs land in `web/public/wasm/`.
 - `wasm/test/smoke_wasm.mjs` — Node-based smoke. Mirrors `smoke_test.sh`; checks for a `visitAdd` frame in the manual call path and asserts the frame's line is a call site inside `visitAdd`'s body, not its signature line (so call-site instrumentation didn't silently regress to function-entry behavior).
-- `web/src/worker/instcombine.worker.ts` — runs the wasm Module in a Web Worker; writes IR into MEMFS at `/work/input.ll`, calls `Module.callMain([])`, then `Module.ccall("dump_iteration_info_external")`, then reads back `/work/llvm_fuzz_info.txt`. A worker is mandatory: `MPM.run` is synchronous and the wasm bundle is large. The worker speaks a two-message protocol (`loadVersion` then `run`) so the main thread can swap wasm versions on the fly; `kind: "bundled"` versions dynamic-import a same-origin URL, while `kind: "remote"` versions fetch the JS + .wasm from a GitHub Release as blobs and dynamic-import the blob URL with `locateFile` pointing at the wasm blob.
+- `web/src/worker/instcombine.worker.ts` — runs the wasm Module in a Web Worker; writes IR into MEMFS at `/work/input.ll`, calls `Module.callMain([])`, then `Module.ccall("dump_iteration_info_external")`, then reads back three MEMFS files: `/work/llvm_fuzz_info.txt` (text trace), `/work/llvm_fuzz_info.json` (JSONL sidecar — optional, older bundles may not emit it), and `/work/output.ll` (post-pass IR — also optional for older bundles). All three are posted back as strings; missing files come through as `""` so the UI degrades cleanly. A worker is mandatory: `MPM.run` is synchronous and the wasm bundle is large. The worker speaks a two-message protocol (`loadVersion` then `run`) so the main thread can swap wasm versions on the fly; `kind: "bundled"` versions dynamic-import a same-origin URL, while `kind: "remote"` versions fetch the JS + .wasm from a GitHub Release as blobs and dynamic-import the blob URL with `locateFile` pointing at the wasm blob.
 - `web/src/wasm/manifest.ts` + `web/scripts/build-manifest.mjs` — runtime manifest type and a Node-only builder. At Pages-deploy time the builder hits `GET /repos/{owner}/{repo}/releases`, filters to releases whose assets include both `instcombine_driver.js` and `instcombine_driver.wasm`, then splits them into two independent pipelines by tag shape. **Tag releases** (`release/llvmorg-X.Y.Z[-rcN]` and any other non-commit-shaped tags) sort newest-first by parsing the `llvmorg-X.Y.Z[-rcN]` semver — stable beats its own rc of the same X.Y.Z; non-matching tags sink to the bottom and order by publish date. They go through three passes: (1) **force-include** any tag listed in `wasm-must-bundle.txt` (via `--include-file`) or `--include <comma list>`, regardless of cap, dedupe, or prerelease flag; (2) **per-major newest** — walk stable releases newest-first and bundle the first one for each LLVM major; (3) **fill** any remaining `--bundle-count` slots (default 50) with the next-newest stable minor.patch versions in the same newest-major-first order. The `--bundle-count` cap applies to auto-picks (passes 2+3); force-includes are extra. **Commit snapshots** (`release/<YYMMDD>-<12hex>` from SHA-based manual releases) run on their own pipeline: sort by publish date desc and bundle the newest `--commit-count` (default 10), independent of `--bundle-count`. Force-includes apply to both pipelines — a commit-snapshot tag listed in `wasm-must-bundle.txt` is bundled extra without consuming a commit-count slot. Each emitted release in `manifest.json` carries a `kind: "tag" | "commit"` field so the App.tsx dropdown can render two `<optgroup>` sections ("Tagged releases" then "Commit snapshots"). Bundled files land in `web/public/wasm/<sanitized-tag>/`, and `manifest.json` lists only bundled entries. `manifest.defaultTag` is the first bundled non-prerelease *tag* release — the highest stable LLVM version — so commit snapshots never become the default selection. Everything not selected is dropped from the manifest entirely: GitHub release-asset URLs redirect to `release-assets.githubusercontent.com`, which omits `Access-Control-Allow-Origin`, so a browser-side fetch can't load them cross-origin without a same-origin proxy. The `WasmSource` type and worker still support a `kind: "remote"` path for future use, but the builder currently never emits one.
 - `wasm-must-bundle.txt` (repo root) — declarative force-include list for the manifest builder. One entry per line, `#` comments and blank lines ignored. Two entry shapes are accepted: an exact release tag (`release/llvmorg-22.1.5` or `release/<YYMMDD>-<12hex>`) matched verbatim against `tag_name`, or a bare 7-40 char hex SHA matched as a prefix against the 12-hex suffix of any commit-snapshot release (so you can pin a commit you know by SHA without having to look up its upstream committer date). Use it to keep specific older minor.patch versions, prereleases, or commit snapshots selectable in the picker even when the default per-pipeline picks would skip them.
 

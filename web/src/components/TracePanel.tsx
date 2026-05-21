@@ -1,9 +1,15 @@
 import MonacoEditor, { type OnMount } from "@monaco-editor/react";
 import { useCallback } from "react";
+import { StructuredTraceView } from "./StructuredTraceView";
+import type { Iteration } from "../trace/types";
+
+export type TraceViewMode = "text" | "structured";
 
 interface TracePanelProps {
   trace: string;
   wordWrap: boolean;
+  viewMode: TraceViewMode;
+  iterations: Iteration[];
 }
 
 const PLACEHOLDER = "— click Run to capture a trace —";
@@ -21,14 +27,17 @@ function registerTraceLang(monaco: typeof import("monaco-editor")) {
     defaultToken: "",
     tokenizer: {
       root: [
-        // === SESSION START ===, === ITERATION START ===, === ITERATION END ===
-        [/===\s*(SESSION|ITERATION)\s+(START|END)\s*===/, "trace-marker"],
+        // === SESSION START ===, === ITERATION N START ===, === ITERATION END ===
+        [/===\s*(SESSION|ITERATION)(\s+\d+)?\s+(START|END)\s*===/, "trace-marker"],
 
         // Section headers, terminated by ":"
         [/^(NEW INSTRUCTIONS IN THIS ITERATION|REPLACEMENTS IN THIS ITERATION):/, "trace-section"],
 
         // (stacktrace disabled ...) — wasm-only sentinel
         [/\(stacktrace disabled[^)]*\)/, "comment"],
+
+        // [opcode=…] [fn=…] [rule=…] [dbg=…] meta tags
+        [/\[(opcode|fn|rule|dbg)=[^\]]*\]/, "trace-meta"],
 
         // VALUE 0xABCDEF... — leading keyword + pointer
         [/\bVALUE\b/, "keyword"],
@@ -60,6 +69,7 @@ function registerTraceLang(monaco: typeof import("monaco-editor")) {
       { token: "trace-arrow", foreground: "D7BA7D", fontStyle: "bold" },
       { token: "trace-frame", foreground: "B5CEA8" },
       { token: "trace-srcloc", foreground: "9CDCFE" },
+      { token: "trace-meta", foreground: "C586C0" },
       { token: "number.hex", foreground: "B5CEA8" },
       { token: "keyword", foreground: "569CD6" },
       { token: "comment", foreground: "6A9955", fontStyle: "italic" },
@@ -68,13 +78,17 @@ function registerTraceLang(monaco: typeof import("monaco-editor")) {
   });
 }
 
-export function TracePanel({ trace, wordWrap }: TracePanelProps) {
+export function TracePanel({ trace, wordWrap, viewMode, iterations }: TracePanelProps) {
   const handleMount = useCallback<OnMount>((editor, monaco) => {
     registerTraceLang(monaco);
     monaco.editor.setModelLanguage(editor.getModel()!, TRACE_LANG_ID);
     editor.updateOptions({ theme: "instcombine-trace-dark" });
     editor.revealLine(1);
   }, []);
+
+  if (viewMode === "structured") {
+    return <StructuredTraceView iterations={iterations} />;
+  }
 
   return (
     <MonacoEditor

@@ -107,7 +107,9 @@ self.onmessage = async (e: MessageEvent<IncomingMessage>) => {
       try { Module.FS.mkdir("/work"); } catch { /* already exists */ }
       Module.FS.chdir("/work");
       Module.FS.writeFile("/work/input.ll", msg.ir);
-      try { Module.FS.unlink("/work/llvm_fuzz_info.txt"); } catch { /* not present */ }
+      for (const f of ["/work/llvm_fuzz_info.txt", "/work/llvm_fuzz_info.json", "/work/output.ll"]) {
+        try { Module.FS.unlink(f); } catch { /* not present */ }
+      }
 
       Module.callMain([]);
       Module.ccall("dump_iteration_info_external", null, [], []);
@@ -118,7 +120,15 @@ self.onmessage = async (e: MessageEvent<IncomingMessage>) => {
       } catch {
         trace = "(no trace produced — InstCombine made no changes, or the runtime failed to open the trace file)";
       }
-      self.postMessage({ type: "done", trace });
+      let traceJson = "";
+      try {
+        traceJson = Module.FS.readFile("/work/llvm_fuzz_info.json", { encoding: "utf8" });
+      } catch { /* older wasm bundle won't emit the JSONL sidecar */ }
+      let outputIr = "";
+      try {
+        outputIr = Module.FS.readFile("/work/output.ll", { encoding: "utf8" });
+      } catch { /* older wasm bundle won't emit /work/output.ll */ }
+      self.postMessage({ type: "done", trace, traceJson, outputIr });
     } catch (err) {
       self.postMessage({
         type: "error",

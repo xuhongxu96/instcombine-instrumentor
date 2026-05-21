@@ -47,10 +47,8 @@ try {
 }
 Module.FS.chdir("/work");
 Module.FS.writeFile("/work/input.ll", SMOKE_IR);
-try {
-  Module.FS.unlink("/work/llvm_fuzz_info.txt");
-} catch {
-  // not present yet — fine
+for (const f of ["/work/llvm_fuzz_info.txt", "/work/llvm_fuzz_info.json", "/work/output.ll"]) {
+  try { Module.FS.unlink(f); } catch { /* not present yet — fine */ }
 }
 
 const rc = Module.callMain([]);
@@ -111,6 +109,64 @@ if (visitAddSigLine !== null && visitAddTraceLine !== null) {
     `WARN: could not extract visitAdd lines (sig=${visitAddSigLine} trace=${visitAddTraceLine}) — skipping call-site assertion`,
   );
 }
+
+// JSONL sidecar — parse line-by-line and verify enriched fields exist.
+let traceJson = "";
+try {
+  traceJson = Module.FS.readFile("/work/llvm_fuzz_info.json", { encoding: "utf8" });
+} catch {
+  console.error("FAIL: /work/llvm_fuzz_info.json missing");
+  process.exit(1);
+}
+let nIter = 0;
+let sawOpcode = false;
+let sawRule = false;
+for (const [idx, line] of traceJson.split("\n").entries()) {
+  const t = line.trim();
+  if (!t) continue;
+  let obj;
+  try {
+    obj = JSON.parse(t);
+  } catch (e) {
+    console.error(`FAIL: line ${idx + 1} not valid JSON:`, e.message);
+    process.exit(1);
+  }
+  for (const k of ["iteration", "new_values", "replacements"]) {
+    if (!(k in obj)) {
+      console.error(`FAIL: line ${idx + 1} missing key ${k}`);
+      process.exit(1);
+    }
+  }
+  for (const v of obj.new_values) {
+    for (const k of ["ptr", "ir", "opcode", "parent_fn", "rule", "frames"]) {
+      if (!(k in v)) {
+        console.error(`FAIL: value on line ${idx + 1} missing key ${k}`);
+        process.exit(1);
+      }
+    }
+    if (v.opcode) sawOpcode = true;
+    if (v.rule) sawRule = true;
+  }
+  nIter++;
+}
+if (nIter === 0) { console.error("FAIL: no iterations in JSONL"); process.exit(1); }
+if (!sawOpcode) { console.error("FAIL: no value carried opcode"); process.exit(1); }
+if (!sawRule)   { console.error("FAIL: no value carried rule"); process.exit(1); }
+console.log(`JSONL sidecar OK: ${nIter} iteration(s); opcode + rule populated`);
+
+// Output IR — must exist and look like an LLVM module.
+let outputIr = "";
+try {
+  outputIr = Module.FS.readFile("/work/output.ll", { encoding: "utf8" });
+} catch {
+  console.error("FAIL: /work/output.ll missing — wasm driver did not serialize the post-pass module");
+  process.exit(1);
+}
+if (!outputIr.includes("define ") || !outputIr.includes("@f")) {
+  console.error("FAIL: /work/output.ll did not contain the smoke function — got:\n" + outputIr.slice(0, 500));
+  process.exit(1);
+}
+console.log(`output.ll OK: ${outputIr.length} bytes`);
 
 console.log(`wasm smoke OK — trace ${trace.length} bytes`);
 console.log(trace.slice(0, Math.min(trace.length, 2000)));

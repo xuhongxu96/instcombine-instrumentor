@@ -5,6 +5,7 @@ build/
 __pycache__/
 *.pyc
 llvm_fuzz_info.txt
+llvm_fuzz_info.json
 web/node_modules/
 web/dist/
 web/public/wasm/instcombine_driver.js
