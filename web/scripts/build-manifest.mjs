@@ -3,25 +3,23 @@
 //
 // For each release whose assets include both `instcombine_driver.js` and
 // `instcombine_driver.wasm`:
-//   - the newest N stable (non-prerelease) releases are downloaded into
-//     `<out-dir>/<slug>/` and recorded as bundled entries.
-//   - all other qualifying releases are recorded as remote entries pointing at
-//     the GitHub asset URL (the webapp fetches them on demand).
+//   - the newest stable (non-prerelease) release per LLVM major version is
+//     downloaded into `<out-dir>/<slug>/` and recorded as a bundled entry,
+//     capped at --bundle-count entries total.
+//   - all other qualifying releases (older minor.patch in an already-bundled
+//     major, prereleases, anything beyond the cap) are recorded as remote
+//     entries pointing at the GitHub asset URL (the webapp fetches them on
+//     demand).
 // Releases whose assets do not include both files are filtered out entirely.
-//
-// If `--bootstrap` is passed and `<out-dir>/_latest/instcombine_driver.{js,wasm}`
-// exists, a synthetic "(latest build)" bundled entry is added at the top of the
-// list — so the Pages site stays functional before any release/* tag is pushed.
 //
 // CLI:
 //   node web/scripts/build-manifest.mjs \
 //     --owner <gh-owner> --repo <gh-repo> --out-dir <path> \
-//     [--bundle-count 10] [--bootstrap] [--api-base https://api.github.com]
+//     [--bundle-count 10] [--api-base https://api.github.com]
 //
 // Reads GITHUB_TOKEN from env to raise the rate limit (works without it for small runs).
 
-import { mkdir, writeFile, access } from "node:fs/promises";
-import { constants as FS_CONST } from "node:fs";
+import { mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 import process from "node:process";
 
@@ -30,12 +28,10 @@ const owner = required(args.owner, "--owner");
 const repo = required(args.repo, "--repo");
 const outDir = path.resolve(required(args["out-dir"], "--out-dir"));
 const bundleCount = Number(args["bundle-count"] ?? 10);
-const includeBootstrap = args.bootstrap === true || args.bootstrap === "true";
 const apiBase = (args["api-base"] ?? "https://api.github.com").replace(/\/+$/, "");
 
 const JS_NAME = "instcombine_driver.js";
 const WASM_NAME = "instcombine_driver.wasm";
-const BOOTSTRAP_SLUG = "_latest";
 
 function parseArgs(argv) {
   const out = {};
@@ -68,6 +64,44 @@ function required(value, name) {
 
 function slugify(tag) {
   return tag.replaceAll("/", "_");
+}
+
+const LLVM_TAG_RE = /llvmorg-(\d+)\.(\d+)\.(\d+)(?:-rc(\d+))?/;
+
+// Extract semver-ish ordering key from a tag like "release/llvmorg-22.1.6"
+// or "release/llvmorg-22.1.0-rc3". Returns null if the tag doesn't match.
+function parseTagVersion(tag) {
+  const m = LLVM_TAG_RE.exec(tag);
+  if (!m) return null;
+  return {
+    major: Number(m[1]),
+    minor: Number(m[2]),
+    patch: Number(m[3]),
+    rc: m[4] === undefined ? null : Number(m[4]),
+  };
+}
+
+// Newest-first comparator: parseable tags rank ahead of unparseable ones; ties
+// inside each group fall back to publish-date descending. rc releases come
+// after the corresponding stable release of the same X.Y.Z.
+function compareReleasesNewestFirst(a, b) {
+  const va = parseTagVersion(a.release.tag_name);
+  const vb = parseTagVersion(b.release.tag_name);
+  if (va && vb) {
+    if (va.major !== vb.major) return vb.major - va.major;
+    if (va.minor !== vb.minor) return vb.minor - va.minor;
+    if (va.patch !== vb.patch) return vb.patch - va.patch;
+    // Stable (rc === null) is newer than any rc of the same X.Y.Z.
+    if (va.rc === null && vb.rc !== null) return -1;
+    if (va.rc !== null && vb.rc === null) return 1;
+    if (va.rc !== vb.rc) return vb.rc - va.rc;
+  } else if (va && !vb) {
+    return -1;
+  } else if (!va && vb) {
+    return 1;
+  }
+  return new Date(b.release.published_at).getTime() -
+    new Date(a.release.published_at).getTime();
 }
 
 async function ghFetch(url) {
@@ -107,15 +141,6 @@ async function downloadAsset(asset, destPath) {
   return buf.length;
 }
 
-async function fileExists(p) {
-  try {
-    await access(p, FS_CONST.R_OK);
-    return true;
-  } catch {
-    return false;
-  }
-}
-
 async function main() {
   await mkdir(outDir, { recursive: true });
 
@@ -135,14 +160,25 @@ async function main() {
     qualifying.push({ release: r, jsAsset: js, wasmAsset: wasm });
   }
 
-  // Newest-first by publish date.
-  qualifying.sort((a, b) =>
-    new Date(b.release.published_at).getTime() - new Date(a.release.published_at).getTime(),
-  );
+  // Newest-first by tag semver (llvmorg-X.Y.Z[-rcN]); falls back to publish
+  // date for tags that don't match the pattern.
+  qualifying.sort(compareReleasesNewestFirst);
 
-  // Bundle only the newest N stable (non-prerelease).
-  const stableQueue = qualifying.filter((q) => !q.release.prerelease);
-  const toBundle = new Set(stableQueue.slice(0, bundleCount).map((q) => q.release.id));
+  // Bundle at most one stable release per LLVM major version (newest minor.patch
+  // wins, thanks to the semver sort above), capped at bundleCount entries.
+  // Unparseable tags slip through the per-major dedupe (they have no major).
+  const toBundle = new Set();
+  const seenMajors = new Set();
+  for (const q of qualifying) {
+    if (q.release.prerelease) continue;
+    if (toBundle.size >= bundleCount) break;
+    const v = parseTagVersion(q.release.tag_name);
+    if (v) {
+      if (seenMajors.has(v.major)) continue;
+      seenMajors.add(v.major);
+    }
+    toBundle.add(q.release.id);
+  }
 
   const releases = [];
   for (const q of qualifying) {
@@ -181,27 +217,6 @@ async function main() {
         jsAsset: q.jsAsset.browser_download_url,
         wasmAsset: q.wasmAsset.browser_download_url,
       });
-    }
-  }
-
-  if (includeBootstrap) {
-    const bootJs = path.join(outDir, BOOTSTRAP_SLUG, JS_NAME);
-    const bootWasm = path.join(outDir, BOOTSTRAP_SLUG, WASM_NAME);
-    if ((await fileExists(bootJs)) && (await fileExists(bootWasm))) {
-      const synthetic = {
-        tag: "(latest build)",
-        name: "(latest build)",
-        slug: BOOTSTRAP_SLUG,
-        publishedAt: new Date().toISOString(),
-        prerelease: false,
-        bundled: true,
-        jsAsset: `${BOOTSTRAP_SLUG}/${JS_NAME}`,
-        wasmAsset: `${BOOTSTRAP_SLUG}/${WASM_NAME}`,
-      };
-      releases.unshift(synthetic);
-      console.log(`added bootstrap entry (latest build) from ${BOOTSTRAP_SLUG}/`);
-    } else {
-      console.log(`bootstrap requested but ${BOOTSTRAP_SLUG}/ has no driver — skipping`);
     }
   }
 

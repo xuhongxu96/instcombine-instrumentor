@@ -38,12 +38,6 @@ jobs:
           cache: npm
           cache-dependency-path: web/package-lock.json
 
-      - name: Download bootstrap wasm from latest wasm.yml run
-        if: github.event_name != 'pull_request'
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: bash .github/scripts/download_wasm_bootstrap.sh "${{ github.repository }}" web/public/wasm/_latest
-
       - name: Build manifest
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -51,8 +45,7 @@ jobs:
           node web/scripts/build-manifest.mjs \
             --owner "${{ github.repository_owner }}" \
             --repo "${{ github.event.repository.name }}" \
-            --out-dir web/public/wasm \
-            --bootstrap
+            --out-dir web/public/wasm
 
       - name: Install frontend deps
         working-directory: web
