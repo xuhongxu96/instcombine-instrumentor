@@ -1,3 +1,1 @@
-# LLVM ref to check out (commit SHA or tag). One ref per file.
-# Lines starting with # and blank lines are ignored.
-llvmorg-22.1.6
+llvmorg-20.1.8
