@@ -47,16 +47,20 @@ jobs:
         id: llvm
         run: bash .github/scripts/resolve_llvm_commit.sh
 
+      - name: Compute ccache keys
+        id: cache_keys
+        run: bash .github/scripts/compute_ccache_keys.sh build "${{ runner.os }}"
+
       - name: Restore ccache
         uses: actions/cache@v4
         with:
           path: .ccache
-          # Per-run key so each run saves a fresh cache; fallbacks let us absorb
-          # compiler/runner-image drift on the same LLVM SHA.
-          key: ccache-build-${{ runner.os }}-${{ steps.llvm.outputs.sha }}-${{ github.run_id }}
-          restore-keys: |
-            ccache-build-${{ runner.os }}-${{ steps.llvm.outputs.sha }}-
-            ccache-build-${{ runner.os }}-
+          # The workflow always dispatches on main, so the key resolves to the
+          # branch-main bucket and shares ccache with build.yml's main runs even
+          # when llvm_ref points at a different upstream revision (ccache itself
+          # hashes file contents, so the bucket is safe to share).
+          key: ${{ steps.cache_keys.outputs.key }}
+          restore-keys: ${{ steps.cache_keys.outputs.restore_keys }}
 
       - name: Patch LLVM
         run: uv run python patch_llvm.py --llvm-repo thirdparty/llvm-project

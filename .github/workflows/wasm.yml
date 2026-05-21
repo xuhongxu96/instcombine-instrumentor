@@ -69,19 +69,20 @@ jobs:
             build/llvm-host/bin/llvm-min-tblgen
           key: host-tblgen-${{ runner.os }}-${{ steps.llvm.outputs.sha }}
 
+      - name: Compute ccache keys
+        id: cache_keys
+        run: bash .github/scripts/compute_ccache_keys.sh wasm "${{ runner.os }}"
+
       - name: Restore ccache
         id: ccache-restore
         uses: actions/cache@v4
         with:
           path: .ccache
-          # Unique per-run key so every run writes a fresh cache (actions/cache only
-          # saves on miss). Fallbacks restore the most recent same-SHA cache, then
-          # any prior wasm cache — this is what lets us absorb compiler/runner-image
-          # drift even when the LLVM SHA is unchanged.
-          key: ccache-wasm-${{ runner.os }}-${{ steps.llvm.outputs.sha }}-${{ github.run_id }}
-          restore-keys: |
-            ccache-wasm-${{ runner.os }}-${{ steps.llvm.outputs.sha }}-
-            ccache-wasm-${{ runner.os }}-
+          # Key is keyed off branch/tag (not LLVM SHA) so successive runs against
+          # the same ref share ccache. Per-run id forces a write each run; the
+          # restore-keys list walks from most-specific to broadest fallback.
+          key: ${{ steps.cache_keys.outputs.key }}
+          restore-keys: ${{ steps.cache_keys.outputs.restore_keys }}
 
       - name: Report ccache restore
         env:
