@@ -37,6 +37,18 @@ function getBaseUrl(): string {
   return base.endsWith("/") ? base : base + "/";
 }
 
+function getRemoteManifestUrl(): string | null {
+  const url = (import.meta as ImportMeta & { env?: { VITE_REMOTE_MANIFEST_URL?: string } })
+    .env?.VITE_REMOTE_MANIFEST_URL;
+  return url && url.length > 0 ? url : null;
+}
+
+async function fetchManifest(url: string): Promise<WasmManifest> {
+  const res = await fetch(url, { cache: "no-cache" });
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  return (await res.json()) as WasmManifest;
+}
+
 // Fallback manifest used when `wasm/manifest.json` is missing (typically `npm run dev`
 // before the manifest builder has run). Points at whatever `build_wasm.sh` last copied
 // into `web/public/wasm/`.
@@ -128,36 +140,36 @@ export function App() {
     worker.postMessage({ type: "loadVersion", id: tag, source });
   }, [releaseByTag]);
 
-  // Fetch the manifest once on mount.
+  // Fetch the manifest once on mount. Waterfall:
+  //   1. Same-origin `wasm/manifest.json` (the Pages-time builder emits this).
+  //   2. The remote `wasm-pkgs/manifest.json` if a URL is baked in via
+  //      VITE_REMOTE_MANIFEST_URL — covers `npm run dev` and misconfigured
+  //      Pages deploys.
+  //   3. fallbackManifest() — single entry pointing at whatever
+  //      build_wasm.sh last dropped under public/wasm/.
   useEffect(() => {
     let cancelled = false;
     (async () => {
+      let manifest: WasmManifest | null = null;
       try {
-        const res = await fetch(`${getBaseUrl()}wasm/manifest.json`, { cache: "no-cache" });
-        if (!res.ok) throw new Error(`HTTP ${res.status}`);
-        const m = (await res.json()) as WasmManifest;
-        if (cancelled) return;
-        const initial = pickInitialTag(m);
-        setManifest(m);
-        if (initial) {
-          setSelectedTag(initial);
-          setState({ kind: "loadingVersion", tag: initial });
-        } else {
-          setState({ kind: "noVersions" });
-        }
+        manifest = await fetchManifest(`${getBaseUrl()}wasm/manifest.json`);
       } catch {
-        if (cancelled) return;
-        // No manifest on disk — fall back to whatever build_wasm.sh dropped at the
-        // legacy path. Lets `npm run dev` work without running the manifest builder.
-        const m = fallbackManifest();
-        const initial = pickInitialTag(m);
-        setManifest(m);
-        if (initial) {
-          setSelectedTag(initial);
-          setState({ kind: "loadingVersion", tag: initial });
-        } else {
-          setState({ kind: "noVersions" });
+        const remote = getRemoteManifestUrl();
+        if (remote) {
+          try {
+            manifest = await fetchManifest(remote);
+          } catch { /* falls through to local fallback */ }
         }
+      }
+      if (cancelled) return;
+      const m = manifest ?? fallbackManifest();
+      const initial = pickInitialTag(m);
+      setManifest(m);
+      if (initial) {
+        setSelectedTag(initial);
+        setState({ kind: "loadingVersion", tag: initial });
+      } else {
+        setState({ kind: "noVersions" });
       }
     })();
     return () => { cancelled = true; };

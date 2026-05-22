@@ -21,9 +21,9 @@
 #   tag-llvmorg   <X>.<Y>.<Z>[-rcN]   llvm_commit.txt holds `llvmorg-X.Y.Z[-rcN]`
 #   tag-commit    <YY>-<MM>-<DD>      llvm_commit.txt holds a hex commit SHA;
 #                                     YYMMDD is the committer date of HEAD in the cloned LLVM checkout
-#   branch        <name>              --branch override (weekly-llvm.yml) or non-tag/SHA llvm_commit.txt content
+#   branch        <name>              --branch override (native-weekly-canary.yml) or non-tag/SHA llvm_commit.txt content
 #
-# weekly-llvm.yml passes `--branch main` because it rewrites llvm_commit.txt
+# native-weekly-canary.yml passes `--branch main` because it rewrites llvm_commit.txt
 # with whatever upstream ref it's testing (often LLVM main tip) — that ref isn't
 # a stable cache identity, so weekly's writes pin to the branch-main bucket and
 # rely on the broader fallbacks for restore hits.

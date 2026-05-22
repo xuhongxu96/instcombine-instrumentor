@@ -1,16 +1,19 @@
-name: wasm
+name: wasm-verify
+
+# Verification-only: confirms the wasm build still compiles and the smoke test
+# passes on PR / push to main. Publishing is owned by wasm-pkgs.yml, which
+# pushes artifacts to the wasm-pkgs branch.
 
 on:
   push:
     branches: [main]
-    tags: ['release/*']
     paths:
       - 'patch_llvm.py'
       - 'runtime/**'
       - 'wasm/**'
       - 'build_wasm.sh'
       - 'llvm_commit.txt'
-      - '.github/workflows/wasm.yml'
+      - '.github/workflows/wasm-verify.yml'
       - '.github/scripts/**'
   pull_request:
     paths:
@@ -19,13 +22,12 @@ on:
       - 'wasm/**'
       - 'build_wasm.sh'
       - 'llvm_commit.txt'
-      - '.github/workflows/wasm.yml'
+      - '.github/workflows/wasm-verify.yml'
       - '.github/scripts/**'
   workflow_dispatch:
 
 permissions:
-  contents: write
-  actions: write
+  contents: read
 
 env:
   EMSDK_VERSION: 5.0.7
@@ -38,7 +40,7 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Install host toolchain
-        run: bash .github/scripts/install_toolchain.sh
+        run: bash .github/scripts/shared/install_toolchain.sh
 
       - name: Set up uv
         uses: astral-sh/setup-uv@v3
@@ -53,7 +55,7 @@ jobs:
 
       - name: Resolve LLVM commit
         id: llvm
-        run: bash .github/scripts/resolve_llvm_commit.sh
+        run: bash .github/scripts/shared/resolve_llvm_commit.sh
 
       - name: Set up emsdk
         uses: emscripten-core/setup-emsdk@v16
@@ -71,16 +73,16 @@ jobs:
 
       - name: Compute ccache keys
         id: cache_keys
-        run: bash .github/scripts/compute_ccache_keys.sh wasm "${{ runner.os }}"
+        run: bash .github/scripts/shared/ccache_keys.sh wasm "${{ runner.os }}"
 
       - name: Restore ccache
         id: ccache-restore
         uses: actions/cache@v4
         with:
           path: .ccache
-          # Key is keyed off branch/tag (not LLVM SHA) so successive runs against
-          # the same ref share ccache. Per-run id forces a write each run; the
-          # restore-keys list walks from most-specific to broadest fallback.
+          # Key is keyed off llvm_commit.txt (see compute_ccache_keys.sh). Per-run
+          # id forces a write each run; the restore-keys list walks from most-
+          # specific to broadest fallback.
           key: ${{ steps.cache_keys.outputs.key }}
           restore-keys: ${{ steps.cache_keys.outputs.restore_keys }}
 
@@ -128,13 +130,4 @@ jobs:
             build/llvm-wasm/bin/instcombine_driver.js
             build/llvm-wasm/bin/instcombine_driver.wasm
           if-no-files-found: error
-          retention-days: 90
-
-      - name: Attach raw assets to GitHub Release
-        if: startsWith(github.ref, 'refs/tags/release/')
-        uses: softprops/action-gh-release@v2
-        with:
-          files: |
-            build/llvm-wasm/bin/instcombine_driver.js
-            build/llvm-wasm/bin/instcombine_driver.wasm
-          fail_on_unmatched_files: true
+          retention-days: 14

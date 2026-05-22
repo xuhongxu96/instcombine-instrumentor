@@ -12,15 +12,17 @@ const REPO_BASE = "https://github.com/llvm/llvm-project";
 const LLVM_PROJECT_SEP = "llvm-project/";
 const LINE_OFFSET = -1; // undo the include prepend
 
-// Manifest tags from web/scripts/build-manifest.mjs come in two shapes:
-//   "release/llvmorg-X.Y.Z[-rcN]" → upstream tag of the same name
-//   "release/YYMMDD-<12hex>"      → 12-char SHA prefix of the upstream commit
+// Manifest tags come from the wasm-pkgs branch directory names:
+//   "llvmorg-X.Y.Z[-rcN]"        → upstream tag of the same name
+//   "main-YYMMDD-<12hex>"        → 12-char SHA prefix of an upstream commit
+// Older bundler runs may still produce "release/…" prefixed slugs — accept
+// both shapes for graceful upgrade.
 // Anything else (e.g. "(local build)") yields null so we render plain text.
 export function llvmRefFromManifestTag(tag: string | null): string | null {
   if (!tag) return null;
-  const llvmorg = tag.match(/^release\/(llvmorg-[\w.+-]+)$/);
+  const llvmorg = tag.match(/^(?:release\/)?(llvmorg-[\w.+-]+)$/);
   if (llvmorg) return llvmorg[1];
-  const commit = tag.match(/^release\/\d{6}-([0-9a-f]{7,40})$/i);
+  const commit = tag.match(/^(?:release\/|main-)\d{6}-([0-9a-f]{7,40})$/i);
   if (commit) return commit[1];
   // local build uses main
   if (tag === "(local build)") return "main";

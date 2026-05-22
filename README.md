@@ -71,10 +71,32 @@ bash build_wasm.sh            # webapp wasm (requires emsdk)
 To edit the injected runtime, edit `runtime/fuzz_runtime.{h,cpp}` directly;
 the patcher reads them at import time.
 
+## How the webapp picks a wasm build
+
+Wasm artifacts for many LLVM versions live on the orphan `wasm-pkgs` branch
+of this repo, one directory per ref (`llvmorg-X.Y.Z[-rcN]/` for stable tags,
+`main-<YYMMDD>-<sha12>/` for daily LLVM-main snapshots). The webapp fetches
+`manifest.json` from the branch via `raw.githubusercontent.com` at startup,
+so new builds appear in the version picker without redeploying Pages.
+
+Publishing is driven by `.github/workflows/wasm-publish.yml`:
+
+- Monday 05 UTC — scan upstream LLVM for missing stable `llvmorg-X.Y.Z` tags
+  and build the newest few.
+- Daily 06 UTC — build current LLVM main HEAD; the workflow keeps the last 7
+  snapshots and prunes older ones.
+- `workflow_dispatch` — manual build of any tag or commit SHA.
+
+CI / native releases are split into independent paths: native `opt-llvm-*.tar.xz`
+tarballs still attach to GitHub Releases via `release/<llvm-tag>` (created by
+`native-release-auto.yml` / `native-release-manual.yml`); the wasm flow is
+entirely separate.
+
 ## More
 
 See [`CLAUDE.md`](CLAUDE.md) for the patching/runtime architecture, trace
-format, CI layout, and the full env-var reference.
+format, full CI layout (per-workflow scripts under `.github/scripts/`), and
+the env-var reference.
 
 ## License
 

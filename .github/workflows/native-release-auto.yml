@@ -1,4 +1,4 @@
-name: auto-release
+name: native-release-auto
 
 # Scan upstream LLVM for new stable git tags (llvmorg-X.Y.Z) and, for each tag
 # this repo hasn't released yet, push a release/<llvm-tag> tag whose commit bumps
@@ -39,7 +39,7 @@ jobs:
         id: plan
         run: |
           set -euo pipefail
-          MISSING=$(bash .github/scripts/list_missing_llvm_tags.sh "${{ github.event.inputs.max_tags || '3' }}")
+          MISSING=$(bash .github/scripts/native-release-auto/list_missing_tags.sh "${{ github.event.inputs.max_tags || '3' }}")
           echo "planning to release (oldest first):"
           printf '%s\n' "$MISSING"
           {
@@ -53,4 +53,4 @@ jobs:
         env:
           DRY_RUN: ${{ github.event.inputs.dry_run || 'false' }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: printf '%s\n' "${{ steps.plan.outputs.missing }}" | bash .github/scripts/auto_release_tags.sh
+        run: printf '%s\n' "${{ steps.plan.outputs.missing }}" | bash .github/scripts/native-release-auto/tags.sh

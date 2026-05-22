@@ -1,23 +1,27 @@
-# Release tags that must always be bundled into web/public/wasm/ at Pages-deploy
-# time, in addition to the default "newest stable per LLVM major version"
-# selection in web/scripts/build-manifest.mjs. One entry per line, lines starting
-# with `#` and blank lines are ignored.
+# Entries that must always be bundled into web/public/wasm/ at Pages-deploy
+# time, in addition to the default "newest stable per LLVM major" auto-picks
+# in web/scripts/build-manifest.mjs. One entry per line, lines starting with
+# `#` and blank lines are ignored.
 #
-# Why: cross-origin fetches of GitHub release assets fail CORS, so only bundled
-# (same-origin Pages) versions appear in the version picker. Force-include an
-# entry here when you want a specific older minor.patch, prerelease, or commit
-# snapshot to be selectable even though the default per-pipeline picks would
-# skip it.
+# Background: the webapp normally loads wasm artifacts directly from the
+# `wasm-pkgs` branch via raw.githubusercontent.com. Local bundling is the
+# fallback path for cases where remote loading isn't acceptable (e.g. CORS
+# regression, slow CDN, you want the artifact pinned into the Pages deploy
+# for archival reasons). Force-include an entry here when you want a
+# specific older minor.patch, prerelease, or commit snapshot to be bundled
+# even if the default per-major auto-picks would skip it.
 #
 # Accepted entry shapes:
-#   * Exact tag name — matched against a release's tag_name verbatim:
-#       release/llvmorg-22.1.5
-#       release/260520-abc123def456
-#   * Bare commit SHA (7-40 hex chars) — matched as a prefix against the 12-hex
-#     suffix of any release/<YYMMDD>-<12hex> commit-snapshot release. Use this
-#     when you know the LLVM commit but not its committer date:
+#   * Exact directory name from wasm-pkgs — matched against the manifest's
+#     `tag` field verbatim:
+#       llvmorg-22.1.5
+#       main-260520-abc123def456
+#   * Bare commit SHA (7-40 hex chars) — matched as a prefix against the
+#     12-hex suffix of any `main-<YYMMDD>-<12hex>` snapshot. Use this when
+#     you know the LLVM commit but not its committer date:
 #       abc123def456
 #
-# Force-include entries override --bundle-count / --commit-count (always bundled,
-# never displaced) but don't suppress the per-major dedupe — i.e., the newest
-# minor.patch of every major still gets bundled regardless of what's listed here.
+# Force-include entries override --bundle-count / --include-commit-count
+# (always bundled, never displaced) but don't suppress the per-major dedupe —
+# i.e., the newest minor.patch of every major still gets auto-bundled
+# regardless of what's listed here.

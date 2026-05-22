@@ -1,4 +1,4 @@
-name: weekly-llvm
+name: native-weekly-canary
 
 on:
   schedule:
@@ -21,7 +21,7 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Install host toolchain
-        run: bash .github/scripts/install_toolchain.sh
+        run: bash .github/scripts/shared/install_toolchain.sh
 
       - name: Set up uv
         uses: astral-sh/setup-uv@v3
@@ -45,14 +45,14 @@ jobs:
 
       - name: Resolve LLVM commit
         id: llvm
-        run: bash .github/scripts/resolve_llvm_commit.sh
+        run: bash .github/scripts/shared/resolve_llvm_commit.sh
 
       - name: Compute ccache keys
         id: cache_keys
         # Weekly intentionally rewrites llvm_commit.txt with arbitrary upstream
         # refs (often LLVM main tip), so pin its cache to the branch-main bucket
         # instead of letting the helper derive a kind/id from that throwaway ref.
-        run: bash .github/scripts/compute_ccache_keys.sh build "${{ runner.os }}" --branch main
+        run: bash .github/scripts/shared/ccache_keys.sh build "${{ runner.os }}" --branch main
 
       - name: Restore ccache
         uses: actions/cache@v4

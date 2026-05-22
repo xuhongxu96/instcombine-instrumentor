@@ -1,0 +1,53 @@
+#!/usr/bin/env bash
+# Build the list of LLVM refs to publish this run. Wraps
+# resolve_wasm_pkgs_refs.sh by translating the mode-keyed env vars passed in
+# from wasm-publish.yml into the right positional invocation, writes the
+# resulting <dirname>\t<llvm_commit> table to a temp file, and emits
+# `refs_file=<path>` + `count=<N>` to $GITHUB_OUTPUT.
+#
+# Env:
+#   MODE          — weekly-stable | daily-main | specific-ref (required)
+#   LLVM_REF      — required if MODE=specific-ref
+#   MAX_TAGS      — required if MODE=weekly-stable (default 3)
+#   FORCE_REBUILD — "true" to skip the "already present" filter
+#                   (weekly-stable only, defaults to false)
+#   WASM_PKGS_DIR — wasm-pkgs worktree path (default ./wasm-pkgs-branch)
+#   RUNNER_TEMP   — temp dir for the refs file (default /tmp)
+
+set -euo pipefail
+
+: "${MODE:?MODE required}"
+WASM_PKGS_DIR=${WASM_PKGS_DIR:-./wasm-pkgs-branch}
+FORCE_REBUILD=${FORCE_REBUILD:-false}
+REFS_FILE="${RUNNER_TEMP:-/tmp}/refs.tsv"
+
+case "$MODE" in
+weekly-stable)
+    bash .github/scripts/wasm-publish/resolve_refs.sh \
+        weekly-stable "${MAX_TAGS:-3}" > "$REFS_FILE"
+    ;;
+daily-main)
+    bash .github/scripts/wasm-publish/resolve_refs.sh daily-main > "$REFS_FILE"
+    ;;
+specific-ref)
+    if [ -z "${LLVM_REF:-}" ]; then
+        echo "error: specific-ref requires LLVM_REF" >&2
+        exit 2
+    fi
+    bash .github/scripts/wasm-publish/resolve_refs.sh \
+        specific-ref "$LLVM_REF" > "$REFS_FILE"
+    ;;
+*)
+    echo "unknown mode: $MODE" >&2
+    exit 2
+    ;;
+esac
+
+echo "refs to build:"
+cat "$REFS_FILE"
+
+COUNT=$(grep -cve '^$' "$REFS_FILE" || true)
+{
+    echo "refs_file=$REFS_FILE"
+    echo "count=$COUNT"
+} >> "${GITHUB_OUTPUT:-/dev/stdout}"

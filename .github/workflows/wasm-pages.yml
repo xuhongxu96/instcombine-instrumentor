@@ -1,0 +1,107 @@
+name: wasm-pages
+
+# Build + deploy the webapp to GitHub Pages. The manifest builder transforms
+# the wasm-pkgs branch's `manifest.json` into the same-origin manifest the
+# webapp fetches at startup. `bundle_mode` (workflow_dispatch input) controls
+# whether wasm artifacts are downloaded into the Pages deploy or left as
+# raw.githubusercontent.com URLs the browser fetches at runtime.
+
+on:
+  schedule:
+    # Mon 09:00 UTC — refresh the bundled snapshot of wasm-pkgs/manifest.json.
+    # Hybrid mode picks up new stable LLVM majors here; remote mode would
+    # actually not need this, but the redeploy is cheap and keeps the cached
+    # same-origin manifest from drifting.
+    - cron: '0 9 * * 1'
+  push:
+    branches: [main]
+    paths:
+      - 'web/**'
+      - '.github/workflows/wasm-pages.yml'
+  pull_request:
+    paths:
+      - 'web/**'
+      - '.github/workflows/wasm-pages.yml'
+  workflow_dispatch:
+    inputs:
+      bundle_mode:
+        description: 'How aggressively to bundle wasm into the Pages deploy'
+        required: true
+        default: 'hybrid'
+        type: choice
+        options:
+          - remote
+          - hybrid
+          - bundled
+      bundle_count:
+        description: 'hybrid/bundled: max auto-picked entries to bundle (force-includes are extra)'
+        required: false
+        default: '5'
+      include_commit_count:
+        description: 'hybrid: max main-* commit snapshots to bundle in addition to tagged releases'
+        required: false
+        default: '0'
+      must_bundle:
+        description: 'CSV of additional tags / SHA prefixes to force-bundle (appended to wasm-must-bundle.txt)'
+        required: false
+        default: ''
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+  actions: read
+
+concurrency:
+  group: pages-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  REMOTE_MANIFEST_URL: https://raw.githubusercontent.com/${{ github.repository }}/wasm-pkgs/manifest.json
+
+jobs:
+  build-frontend:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - name: Build manifest
+        env:
+          BUNDLE_MODE: ${{ github.event.inputs.bundle_mode || 'hybrid' }}
+          BUNDLE_COUNT: ${{ github.event.inputs.bundle_count || '5' }}
+          INCLUDE_COMMIT_COUNT: ${{ github.event.inputs.include_commit_count || '0' }}
+          MUST_BUNDLE: ${{ github.event.inputs.must_bundle || '' }}
+        run: bash .github/scripts/wasm-pages/build_manifest.sh
+
+      - name: Install frontend deps
+        working-directory: web
+        run: npm install --no-audit --no-fund
+
+      - name: Build frontend
+        working-directory: web
+        env:
+          VITE_REMOTE_MANIFEST_URL: ${{ env.REMOTE_MANIFEST_URL }}
+        run: npm run build
+
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: web/dist
+
+  deploy:
+    if: github.event_name != 'pull_request'
+    needs: build-frontend
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4

@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # Create a single release/<tag> in this repo whose commit bumps llvm_commit.txt
-# to the given LLVM ref, then dispatch wasm.yml + build.yml against the new tag.
-# Mirrors auto_release_tags.sh but takes one ref via args instead of reading a
-# list from stdin.
+# to the given LLVM ref, then dispatch native-build.yml against the new tag. Mirrors
+# auto_release_tags.sh but takes one ref via args instead of reading a list
+# from stdin. Native opt tarballs only — wasm publishing lives in wasm-publish.yml.
 #
 # Accepted refs and resulting release tag:
 #   - `^llvmorg-*` stable upstream tag      → release/<the tag>
@@ -49,7 +49,7 @@ REPO=${GITHUB_REPOSITORY:?"GITHUB_REPOSITORY must be set"}
 echo "=== $LLVM_REF → $REL_TAG ==="
 
 if [ "$DRY_RUN" = "true" ]; then
-    echo "dry-run: would create $REL_TAG and dispatch wasm.yml + build.yml"
+    echo "dry-run: would create $REL_TAG and dispatch native-build.yml"
     exit 0
 fi
 
@@ -58,8 +58,8 @@ if git ls-remote --exit-code origin "refs/tags/$REL_TAG" >/dev/null 2>&1; then
     exit 1
 fi
 
-git config user.name "instcombine-instrumentor-bot"
-git config user.email "instcombine-instrumentor-bot@users.noreply.github.com"
+git config user.name "Hongxu Xu"
+git config user.email "hongxu.xu@uwaterloo.ca"
 
 git switch --detach origin/main
 printf '%s\n' "$LLVM_REF" > llvm_commit.txt
@@ -76,5 +76,4 @@ gh release create "$REL_TAG" \
     --notes "Manual release tracking LLVM ref \`$LLVM_REF\`." \
     || echo "release $REL_TAG may already exist (continuing)"
 
-gh workflow run wasm.yml --repo "$REPO" --ref "refs/tags/$REL_TAG"
-gh workflow run build.yml --repo "$REPO" --ref "refs/tags/$REL_TAG"
+gh workflow run native-build.yml --repo "$REPO" --ref "refs/tags/$REL_TAG"

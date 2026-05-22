@@ -1,0 +1,179 @@
+name: wasm-publish
+
+# Build wasm bundles for one or more LLVM refs and publish them to the
+# `wasm-pkgs` branch. The webapp loads artifacts directly from that branch
+# via raw.githubusercontent.com at runtime, so a Pages redeploy is not
+# required to make new builds visible (unless the operator opts into local
+# bundling in pages.yml).
+#
+# Three modes:
+#   weekly-stable — scan upstream LLVM for stable llvmorg-X.Y.Z tags not yet
+#                   present on wasm-pkgs and build up to `max_tags` of them.
+#   daily-main    — build the current LLVM main HEAD; prune older main-* snapshots.
+#   specific-ref  — operator-supplied llvmorg-* tag or 7-40 hex commit SHA.
+
+on:
+  schedule:
+    # Mon 05:00 UTC — sync recent stable LLVM tags.
+    - cron: '0 5 * * 1'
+    # Daily 06:00 UTC — snapshot LLVM main HEAD.
+    - cron: '0 6 * * *'
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: 'Build mode'
+        required: true
+        default: 'specific-ref'
+        type: choice
+        options:
+          - weekly-stable
+          - daily-main
+          - specific-ref
+      llvm_ref:
+        description: 'LLVM ref (specific-ref only): llvmorg-* tag or 7-40 hex commit SHA'
+        required: false
+        default: ''
+      max_tags:
+        description: 'weekly-stable: max missing stable tags to build this run'
+        required: false
+        default: '3'
+      prune_main:
+        description: 'daily-main: number of main-* snapshots to retain'
+        required: false
+        default: '7'
+      force_rebuild:
+        description: 'weekly-stable: skip the "already present on wasm-pkgs" short-circuit'
+        required: false
+        default: 'false'
+        type: boolean
+      dry_run:
+        description: 'Build but do not push to wasm-pkgs'
+        required: false
+        default: 'false'
+        type: boolean
+
+permissions:
+  contents: write
+
+concurrency:
+  # Single global group: every run of this workflow pushes to the same branch,
+  # so serialize all of them. A weekly-stable run that's still building will
+  # queue (not cancel) the daily-main run that fires at the same hour on
+  # Mondays, and vice versa.
+  group: wasm-pkgs
+  cancel-in-progress: false
+
+env:
+  EMSDK_VERSION: 5.0.7
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 350
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Pick mode and inputs
+        id: dispatch
+        env:
+          EVENT: ${{ github.event_name }}
+          SCHEDULE: ${{ github.event.schedule }}
+          INPUT_MODE: ${{ github.event.inputs.mode }}
+          INPUT_LLVM_REF: ${{ github.event.inputs.llvm_ref }}
+          INPUT_MAX_TAGS: ${{ github.event.inputs.max_tags }}
+          INPUT_PRUNE_MAIN: ${{ github.event.inputs.prune_main }}
+          INPUT_FORCE_REBUILD: ${{ github.event.inputs.force_rebuild }}
+          INPUT_DRY_RUN: ${{ github.event.inputs.dry_run }}
+        run: bash .github/scripts/wasm-publish/dispatch.sh
+
+      - name: Install host toolchain
+        run: bash .github/scripts/shared/install_toolchain.sh
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v3
+        with:
+          enable-cache: true
+
+      - name: Install Python deps
+        run: uv sync
+
+      - name: Set up emsdk
+        uses: emscripten-core/setup-emsdk@v16
+        with:
+          version: ${{ env.EMSDK_VERSION }}
+          actions-cache-folder: emsdk-cache-${{ env.EMSDK_VERSION }}
+
+      - name: Set up wasm-pkgs worktree
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: bash .github/scripts/wasm-publish/setup_worktree.sh
+
+      - name: Resolve build list
+        id: resolve
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          MODE: ${{ steps.dispatch.outputs.mode }}
+          LLVM_REF: ${{ steps.dispatch.outputs.llvm_ref }}
+          MAX_TAGS: ${{ steps.dispatch.outputs.max_tags }}
+          FORCE_REBUILD: ${{ steps.dispatch.outputs.force_rebuild }}
+          WASM_PKGS_DIR: ./wasm-pkgs-branch
+        run: bash .github/scripts/wasm-publish/resolve.sh
+
+      - name: Short-circuit if nothing to build
+        if: steps.resolve.outputs.count == '0'
+        run: |
+          echo "Nothing to build — wasm-pkgs is already up to date for this mode."
+
+      - name: Compute ccache keys
+        id: cache_keys
+        if: steps.resolve.outputs.count != '0'
+        # Use --branch wasm-pkgs as the bucket: this workflow cycles through
+        # multiple LLVM refs in a single run, so a per-ref ccache key doesn't
+        # make sense. Restore-keys fall back to branch-main and the workflow
+        # catch-all so we pick up something useful on cold start.
+        run: bash .github/scripts/shared/ccache_keys.sh wasm "${{ runner.os }}" --branch wasm-pkgs
+
+      - name: Restore ccache
+        id: ccache-restore
+        if: steps.resolve.outputs.count != '0'
+        uses: actions/cache@v4
+        with:
+          path: .ccache
+          key: ${{ steps.cache_keys.outputs.key }}
+          restore-keys: ${{ steps.cache_keys.outputs.restore_keys }}
+
+      - name: Reset ccache stats
+        if: steps.resolve.outputs.count != '0'
+        env:
+          CCACHE_DIR: ${{ github.workspace }}/.ccache
+        run: ccache -z || true
+
+      - name: Build all refs
+        if: steps.resolve.outputs.count != '0'
+        env:
+          CCACHE_DIR: ${{ github.workspace }}/.ccache
+          CCACHE_COMPILERCHECK: string:emsdk-${{ env.EMSDK_VERSION }}
+          REFS_FILE: ${{ steps.resolve.outputs.refs_file }}
+        run: |
+          set -euo pipefail
+          while IFS=$'\t' read -r DIRNAME LLVM_COMMIT; do
+              [ -z "$DIRNAME" ] && continue
+              bash .github/scripts/wasm-publish/build_one.sh "$DIRNAME" "$LLVM_COMMIT"
+          done < "$REFS_FILE"
+
+      - name: Finalize (prune + manifest + commit + push)
+        if: steps.resolve.outputs.count != '0'
+        env:
+          MODE: ${{ steps.dispatch.outputs.mode }}
+          PRUNE_MAIN: ${{ steps.dispatch.outputs.prune_main }}
+          DRY_RUN: ${{ steps.dispatch.outputs.dry_run }}
+          REFS_FILE: ${{ steps.resolve.outputs.refs_file }}
+          GH_OWNER: ${{ github.repository_owner }}
+          GH_REPO: ${{ github.event.repository.name }}
+        run: bash .github/scripts/wasm-publish/finalize.sh
+
+      - name: ccache stats
+        if: always() && steps.resolve.outputs.count != '0'
+        env:
+          CCACHE_DIR: ${{ github.workspace }}/.ccache
+        run: ccache -s -v || ccache -s || true

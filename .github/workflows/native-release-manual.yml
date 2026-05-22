@@ -1,4 +1,4 @@
-name: manual-release
+name: native-release-manual
 
 # One-shot, manually triggered companion to auto-release.yml. Takes a single
 # LLVM ref (llvmorg-* tag or commit SHA), creates a release/<name> tag whose
@@ -36,4 +36,4 @@ jobs:
           LLVM_REF: ${{ github.event.inputs.llvm_ref }}
           DRY_RUN: ${{ github.event.inputs.dry_run }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: bash .github/scripts/manual_release_tag.sh "$LLVM_REF"
+        run: bash .github/scripts/native-release-manual/tag.sh "$LLVM_REF"
