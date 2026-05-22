@@ -16,6 +16,7 @@ namespace llvm_fuzz {
     void record_replacement(void* old_val, void* new_val);
     void start_iteration();
     void dump_iteration_info();
+    void reset_trace_state();
 
     template<typename T>
     T* record_stacktrace_with_loc(T* val, const char* file, int line, const char* func) {

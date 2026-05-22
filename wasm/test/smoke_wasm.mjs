@@ -46,21 +46,45 @@ try {
   if (!(e && (e.errno === 20 || /File exists/i.test(String(e))))) throw e;
 }
 Module.FS.chdir("/work");
-Module.FS.writeFile("/work/input.ll", SMOKE_IR);
-for (const f of ["/work/llvm_fuzz_info.txt", "/work/llvm_fuzz_info.json", "/work/output.ll"]) {
-  try { Module.FS.unlink(f); } catch { /* not present yet — fine */ }
+
+function runOnce() {
+  try {
+    Module.ccall("reset_trace_state_external", null, [], []);
+  } catch (e) {
+    console.error("FAIL: reset_trace_state_external missing or failed:", e?.message ?? e);
+    process.exit(1);
+  }
+
+  Module.FS.writeFile("/work/input.ll", SMOKE_IR);
+  for (const f of ["/work/llvm_fuzz_info.txt", "/work/llvm_fuzz_info.json", "/work/output.ll"]) {
+    try { Module.FS.unlink(f); } catch { /* not present yet — fine */ }
+  }
+
+  const rc = Module.callMain([]);
+  if (rc !== 0 && rc !== undefined) {
+    console.error("FAIL: driver exited with code", rc);
+    console.error(stderrChunks.join("\n"));
+    process.exit(1);
+  }
+
+  Module.ccall("dump_iteration_info_external", null, [], []);
+
+  let trace = "";
+  let traceJson = "";
+  let outputIr = "";
+  try {
+    trace = Module.FS.readFile("/work/llvm_fuzz_info.txt", { encoding: "utf8" });
+  } catch {}
+  try {
+    traceJson = Module.FS.readFile("/work/llvm_fuzz_info.json", { encoding: "utf8" });
+  } catch {}
+  try {
+    outputIr = Module.FS.readFile("/work/output.ll", { encoding: "utf8" });
+  } catch {}
+  return { trace, traceJson, outputIr };
 }
 
-const rc = Module.callMain([]);
-if (rc !== 0 && rc !== undefined) {
-  console.error("FAIL: driver exited with code", rc);
-  console.error(stderrChunks.join("\n"));
-  process.exit(1);
-}
-
-Module.ccall("dump_iteration_info_external", null, [], []);
-
-const trace = Module.FS.readFile("/work/llvm_fuzz_info.txt", { encoding: "utf8" });
+const { trace, traceJson, outputIr } = runOnce();
 const missing = REQUIRED_MARKERS.filter((m) => !trace.includes(m));
 if (missing.length) {
   console.error("FAIL: missing markers in trace:", missing);
@@ -111,10 +135,7 @@ if (visitAddSigLine !== null && visitAddTraceLine !== null) {
 }
 
 // JSONL sidecar — parse line-by-line and verify enriched fields exist.
-let traceJson = "";
-try {
-  traceJson = Module.FS.readFile("/work/llvm_fuzz_info.json", { encoding: "utf8" });
-} catch {
+if (!traceJson) {
   console.error("FAIL: /work/llvm_fuzz_info.json missing");
   process.exit(1);
 }
@@ -155,10 +176,7 @@ if (!sawRule)   { console.error("FAIL: no value carried rule"); process.exit(1);
 console.log(`JSONL sidecar OK: ${nIter} iteration(s); opcode + rule populated`);
 
 // Output IR — must exist and look like an LLVM module.
-let outputIr = "";
-try {
-  outputIr = Module.FS.readFile("/work/output.ll", { encoding: "utf8" });
-} catch {
+if (!outputIr) {
   console.error("FAIL: /work/output.ll missing — wasm driver did not serialize the post-pass module");
   process.exit(1);
 }
@@ -167,6 +185,17 @@ if (!outputIr.includes("define ") || !outputIr.includes("@f")) {
   process.exit(1);
 }
 console.log(`output.ll OK: ${outputIr.length} bytes`);
+
+for (let i = 1; i <= 25; i++) {
+  const rerun = runOnce();
+  const rerunMissing = REQUIRED_MARKERS.filter((m) => !rerun.trace.includes(m));
+  if (rerunMissing.length) {
+    console.error(`FAIL: repeated run ${i} lost trace markers:`, rerunMissing);
+    console.error("--- trace ---\n" + rerun.trace);
+    process.exit(1);
+  }
+}
+console.log("Repeated-run reset OK: 25/25 traces retained markers");
 
 console.log(`wasm smoke OK — trace ${trace.length} bytes`);
 console.log(trace.slice(0, Math.min(trace.length, 2000)));

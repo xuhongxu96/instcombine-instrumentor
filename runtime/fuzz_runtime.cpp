@@ -418,6 +418,18 @@ void dump_iteration_info() {
     iter_state.replacements.clear();
 }
 
+void reset_trace_state() {
+    if (is_trace_disabled()) return;
+
+    std::lock_guard<std::mutex> lock(get_global_mutex());
+    call_path.clear();
+    get_trace_map().clear();
+    iter_state.new_values.clear();
+    iter_state.replacements.clear();
+    iter_counter = 0;
+    session_started_flag() = false;
+}
+
 #ifndef __EMSCRIPTEN__
 // Native only: register a final flush at process exit so the last iteration
 // isn't dropped. Under emscripten the JS host calls dump_iteration_info_external
@@ -439,4 +451,8 @@ static AtExitRegister reg;
 // (emscripten's std::atexit isn't reliable). Harmless on native builds.
 extern "C" void dump_iteration_info_external() {
     llvm_fuzz::dump_iteration_info();
+}
+
+extern "C" void reset_trace_state_external() {
+    llvm_fuzz::reset_trace_state();
 }

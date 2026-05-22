@@ -138,6 +138,12 @@ self.onmessage = async (e: MessageEvent<IncomingMessage>) => {
     active.stderr.length = 0;
     try {
       const Module = await active.promise;
+      // The wasm runtime keeps trace state in process-global statics. Because
+      // the worker reuses loaded modules across runs, reset that state before
+      // each execution so pointer-based dedup doesn't leak across problems.
+      try {
+        Module.ccall("reset_trace_state_external", null, [], []);
+      } catch { /* older bundles won't export reset; best-effort only */ }
       try { Module.FS.mkdir("/work"); } catch { /* already exists */ }
       Module.FS.chdir("/work");
       Module.FS.writeFile("/work/input.ll", msg.ir);

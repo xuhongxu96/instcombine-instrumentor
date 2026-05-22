@@ -6,7 +6,7 @@
 # `display_name=...` summary to $GITHUB_OUTPUT.
 #
 # Env:
-#   MODE          — weekly-stable | daily-main | specific-ref (required)
+#   MODE          — weekly-stable | daily-main | specific-ref | rebuild-existing (required)
 #   LLVM_REF      — required if MODE=specific-ref. Accepts a single ref or
 #                   a comma-separated list (whitespace around commas is OK):
 #                   "llvmorg-22.1.6, llvmorg-21.1.4, abc123def456".
@@ -48,6 +48,9 @@ specific-ref)
         bash .github/scripts/wasm-publish/resolve_refs.sh \
             specific-ref "$REF" >> "$REFS_FILE"
     done
+    ;;
+rebuild-existing)
+    bash .github/scripts/wasm-publish/resolve_refs.sh rebuild-existing > "$REFS_FILE"
     ;;
 *)
     echo "unknown mode: $MODE" >&2

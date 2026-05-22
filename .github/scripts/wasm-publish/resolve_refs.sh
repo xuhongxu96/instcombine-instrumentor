@@ -12,6 +12,7 @@
 #   resolve_wasm_pkgs_refs.sh weekly-stable <max_tags> [<wasm_pkgs_dir>]
 #   resolve_wasm_pkgs_refs.sh daily-main
 #   resolve_wasm_pkgs_refs.sh specific-ref <llvm_ref>
+#   resolve_wasm_pkgs_refs.sh rebuild-existing [<wasm_pkgs_dir>]
 #
 # Env:
 #   FORCE_REBUILD — "true" to skip the "already present in wasm-pkgs" check
@@ -21,8 +22,8 @@
 #                   local checkout already exists
 #   UPSTREAM      — upstream LLVM repo URL (default github.com/llvm/llvm-project)
 #
-# Requires `gh` on PATH and authenticated (for daily-main / specific-ref SHA
-# lookups). Stable tag scanning uses `git ls-remote` only.
+# Requires `gh` on PATH and authenticated (for daily-main / specific-ref /
+# rebuild-existing SHA lookups). Stable tag scanning uses `git ls-remote` only.
 
 set -euo pipefail
 
@@ -45,6 +46,32 @@ resolve_sha() {
         printf 'main-%s-%s\t%s\n' "$YYMMDD" "${FULL_SHA:0:12}" "$FULL_SHA"
     else
         echo "error: $REF is not an llvmorg-* tag or 7-40 hex commit SHA" >&2
+        return 1
+    fi
+}
+
+list_existing_dirs() {
+    if [ -d "$WASM_PKGS_DIR" ]; then
+        find "$WASM_PKGS_DIR" -mindepth 1 -maxdepth 1 -type d -printf '%f\n'
+        return
+    fi
+
+    git fetch --no-tags --depth=1 origin wasm-pkgs >/dev/null 2>&1 || return 0
+    git ls-tree -d --name-only FETCH_HEAD
+}
+
+resolve_existing_dir() {
+    local DIRNAME=$1
+    if [[ "$DIRNAME" =~ ^llvmorg-[0-9]+\.[0-9]+\.[0-9]+(-rc[0-9]+)?$ ]]; then
+        printf '%s\t%s\n' "$DIRNAME" "$DIRNAME"
+    elif [[ "$DIRNAME" =~ ^main-[0-9]{6}-([0-9a-fA-F]{7,40})$ ]]; then
+        local SHORT_SHA=${BASH_REMATCH[1]}
+        local JSON FULL_SHA
+        JSON=$(gh api "repos/llvm/llvm-project/commits/$SHORT_SHA")
+        FULL_SHA=$(jq -r '.sha' <<<"$JSON")
+        printf '%s\t%s\n' "$DIRNAME" "$FULL_SHA"
+    else
+        echo "error: unsupported wasm-pkgs directory name: $DIRNAME" >&2
         return 1
     fi
 }
@@ -99,6 +126,19 @@ daily-main)
 specific-ref)
     REF=${2:?"specific-ref requires an llvm_ref argument"}
     resolve_sha "$REF"
+    ;;
+rebuild-existing)
+    EXISTING_DIRS=$(mktemp)
+    trap 'rm -f "$EXISTING_DIRS"' EXIT
+    list_existing_dirs > "$EXISTING_DIRS"
+
+    {
+        grep -E '^llvmorg-[0-9]+\.[0-9]+\.[0-9]+(-rc[0-9]+)?$' "$EXISTING_DIRS" | sort -V || true
+        grep -E '^main-[0-9]{6}-[0-9a-fA-F]{7,40}$' "$EXISTING_DIRS" | sort -V || true
+    } | while IFS= read -r DIRNAME; do
+        [ -z "$DIRNAME" ] && continue
+        resolve_existing_dir "$DIRNAME"
+    done
     ;;
 *)
     echo "unknown mode: $MODE" >&2
