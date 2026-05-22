@@ -51,13 +51,23 @@ async function loadFromSource(id: string, source: WasmSource): Promise<ActiveMod
     // Cross-origin module imports require strict CORS + correct Content-Type from
     // the responding server. Sidestep that by fetching as blobs and importing the
     // resulting blob URL — same-origin from the browser's perspective.
+    //
+    // raw.githubusercontent.com serves .js as `text/plain`, which violates the
+    // strict-MIME rule for ES-module imports. The blob URL inherits the response
+    // Content-Type unless we override it, so re-wrap with the right MIME types
+    // before handing to import() / emscripten.
     const [jsResp, wasmResp] = await Promise.all([
       fetch(source.jsUrl),
       fetch(source.wasmUrl),
     ]);
     if (!jsResp.ok) throw new Error(`fetch js failed: ${jsResp.status}`);
     if (!wasmResp.ok) throw new Error(`fetch wasm failed: ${wasmResp.status}`);
-    const [jsBlob, wasmBlob] = await Promise.all([jsResp.blob(), wasmResp.blob()]);
+    const [jsBytes, wasmBytes] = await Promise.all([
+      jsResp.arrayBuffer(),
+      wasmResp.arrayBuffer(),
+    ]);
+    const jsBlob = new Blob([jsBytes], { type: "text/javascript" });
+    const wasmBlob = new Blob([wasmBytes], { type: "application/wasm" });
     const jsBlobUrl = URL.createObjectURL(jsBlob);
     const wasmBlobUrl = URL.createObjectURL(wasmBlob);
     revokeUrls.push(jsBlobUrl, wasmBlobUrl);
