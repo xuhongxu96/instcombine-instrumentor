@@ -148,11 +148,17 @@ jobs:
 
       - name: Compute ccache keys
         id: cache_keys
-        # Use --branch wasm-pkgs as the bucket: this workflow cycles through
-        # multiple LLVM refs in a single run, so a per-ref ccache key doesn't
-        # make sense. Restore-keys fall back to branch-main and the workflow
-        # catch-all so we pick up something useful on cold start.
-        run: bash .github/scripts/shared/ccache_keys.sh wasm "${{ runner.os }}" --branch wasm-pkgs
+        # daily-main builds LLVM main HEAD, so pin those writes to branch-main
+        # and let them share with the native weekly canary. The multi-ref modes
+        # keep their own wasm-pkgs bucket because a single run may build several
+        # unrelated LLVM refs.
+        run: |
+          set -euo pipefail
+          if [ "${{ needs.resolve.outputs.mode }}" = "daily-main" ]; then
+            bash .github/scripts/shared/ccache_keys.sh wasm "${{ runner.os }}" --branch main
+          else
+            bash .github/scripts/shared/ccache_keys.sh wasm "${{ runner.os }}" --branch wasm-pkgs
+          fi
 
       - name: Restore ccache
         id: ccache-restore
