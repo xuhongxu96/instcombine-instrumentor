@@ -59,14 +59,15 @@ env:
   EMSDK_VERSION: 5.0.7
 
 jobs:
-  build:
+  resolve:
+    name: Resolve build list
     runs-on: ubuntu-latest
-    timeout-minutes: 350
     outputs:
       mode: ${{ steps.dispatch.outputs.mode }}
       prune_main: ${{ steps.dispatch.outputs.prune_main }}
       dry_run: ${{ steps.dispatch.outputs.dry_run }}
       count: ${{ steps.resolve.outputs.count }}
+      display_name: ${{ steps.resolve.outputs.display_name }}
     steps:
       - uses: actions/checkout@v4
 
@@ -82,6 +83,51 @@ jobs:
           INPUT_FORCE_REBUILD: ${{ github.event.inputs.force_rebuild }}
           INPUT_DRY_RUN: ${{ github.event.inputs.dry_run }}
         run: bash .github/scripts/wasm-publish/dispatch.sh
+
+      - name: Resolve build list
+        id: resolve
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          MODE: ${{ steps.dispatch.outputs.mode }}
+          LLVM_REF: ${{ steps.dispatch.outputs.llvm_ref }}
+          MAX_TAGS: ${{ steps.dispatch.outputs.max_tags }}
+          FORCE_REBUILD: ${{ steps.dispatch.outputs.force_rebuild }}
+        run: bash .github/scripts/wasm-publish/resolve.sh
+
+      - name: Short-circuit if nothing to build
+        if: steps.resolve.outputs.count == '0'
+        run: |
+          echo "Nothing to build — wasm-pkgs is already up to date for this mode."
+
+      - name: Upload resolved refs
+        if: steps.resolve.outputs.count != '0'
+        uses: actions/upload-artifact@v4
+        with:
+          name: wasm-publish-refs
+          path: ${{ steps.resolve.outputs.refs_file }}
+          if-no-files-found: error
+          retention-days: 1
+
+  build:
+    name: Build (${{ needs.resolve.outputs.display_name }})
+    needs: resolve
+    if: needs.resolve.outputs.count != '0'
+    runs-on: ubuntu-latest
+    timeout-minutes: 350
+    outputs:
+      mode: ${{ needs.resolve.outputs.mode }}
+      prune_main: ${{ needs.resolve.outputs.prune_main }}
+      dry_run: ${{ needs.resolve.outputs.dry_run }}
+      count: ${{ needs.resolve.outputs.count }}
+      display_name: ${{ needs.resolve.outputs.display_name }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download resolved refs
+        uses: actions/download-artifact@v4
+        with:
+          name: wasm-publish-refs
+          path: wasm-publish-resolve
 
       - name: Install host toolchain
         run: bash .github/scripts/shared/install_toolchain.sh
@@ -100,24 +146,8 @@ jobs:
           version: ${{ env.EMSDK_VERSION }}
           actions-cache-folder: emsdk-cache-${{ env.EMSDK_VERSION }}
 
-      - name: Resolve build list
-        id: resolve
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          MODE: ${{ steps.dispatch.outputs.mode }}
-          LLVM_REF: ${{ steps.dispatch.outputs.llvm_ref }}
-          MAX_TAGS: ${{ steps.dispatch.outputs.max_tags }}
-          FORCE_REBUILD: ${{ steps.dispatch.outputs.force_rebuild }}
-        run: bash .github/scripts/wasm-publish/resolve.sh
-
-      - name: Short-circuit if nothing to build
-        if: steps.resolve.outputs.count == '0'
-        run: |
-          echo "Nothing to build — wasm-pkgs is already up to date for this mode."
-
       - name: Compute ccache keys
         id: cache_keys
-        if: steps.resolve.outputs.count != '0'
         # Use --branch wasm-pkgs as the bucket: this workflow cycles through
         # multiple LLVM refs in a single run, so a per-ref ccache key doesn't
         # make sense. Restore-keys fall back to branch-main and the workflow
@@ -126,7 +156,6 @@ jobs:
 
       - name: Restore ccache
         id: ccache-restore
-        if: steps.resolve.outputs.count != '0'
         uses: actions/cache@v4
         with:
           path: .ccache
@@ -134,17 +163,15 @@ jobs:
           restore-keys: ${{ steps.cache_keys.outputs.restore_keys }}
 
       - name: Reset ccache stats
-        if: steps.resolve.outputs.count != '0'
         env:
           CCACHE_DIR: ${{ github.workspace }}/.ccache
         run: ccache -z || true
 
       - name: Build all refs
-        if: steps.resolve.outputs.count != '0'
         env:
           CCACHE_DIR: ${{ github.workspace }}/.ccache
           CCACHE_COMPILERCHECK: string:emsdk-${{ env.EMSDK_VERSION }}
-          REFS_FILE: ${{ steps.resolve.outputs.refs_file }}
+          REFS_FILE: ${{ github.workspace }}/wasm-publish-resolve/refs.tsv
           STAGING_DIR: ${{ github.workspace }}/wasm-publish-staging/releases
         run: |
           set -euo pipefail
@@ -156,13 +183,12 @@ jobs:
           cp "$REFS_FILE" "$GITHUB_WORKSPACE/wasm-publish-staging/refs.tsv"
 
       - name: ccache stats
-        if: always() && steps.resolve.outputs.count != '0'
+        if: always()
         env:
           CCACHE_DIR: ${{ github.workspace }}/.ccache
         run: ccache -s -v || ccache -s || true
 
       - name: Upload publish staging
-        if: steps.resolve.outputs.count != '0'
         uses: actions/upload-artifact@v4
         with:
           name: wasm-publish-staging
@@ -172,6 +198,7 @@ jobs:
 
   finalize:
     needs: build
+    name: Finalize (${{ needs.build.outputs.display_name }})
     if: needs.build.outputs.count != '0'
     runs-on: ubuntu-latest
     timeout-minutes: 30

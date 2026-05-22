@@ -2,8 +2,8 @@
 # Build the list of LLVM refs to publish this run. Wraps resolve_refs.sh by
 # translating the mode-keyed env vars passed in from wasm-publish.yml into the
 # right positional invocation, writes the resulting <dirname>\t<llvm_commit>
-# table to a temp file, and emits `refs_file=<path>` + `count=<N>` to
-# $GITHUB_OUTPUT.
+# table to a temp file, and emits `refs_file=<path>`, `count=<N>`, and a short
+# `display_name=...` summary to $GITHUB_OUTPUT.
 #
 # Env:
 #   MODE          — weekly-stable | daily-main | specific-ref (required)
@@ -59,7 +59,20 @@ echo "refs to build:"
 cat "$REFS_FILE"
 
 COUNT=$(grep -cve '^$' "$REFS_FILE" || true)
+DISPLAY_NAME="nothing to build"
+if [ "$COUNT" -gt 0 ]; then
+    mapfile -t DIRS < <(cut -f1 "$REFS_FILE" | grep -v '^$')
+    if [ "$COUNT" -eq 1 ]; then
+        DISPLAY_NAME=${DIRS[0]}
+    elif [ "$COUNT" -eq 2 ]; then
+        DISPLAY_NAME="${DIRS[0]}, ${DIRS[1]}"
+    else
+        DISPLAY_NAME="${DIRS[0]}, ${DIRS[1]}, +$((COUNT - 2)) more"
+    fi
+fi
+
 {
     echo "refs_file=$REFS_FILE"
     echo "count=$COUNT"
+    echo "display_name=$DISPLAY_NAME"
 } >> "${GITHUB_OUTPUT:-/dev/stdout}"
