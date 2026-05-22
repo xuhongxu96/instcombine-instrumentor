@@ -63,14 +63,6 @@ jobs:
           version: ${{ env.EMSDK_VERSION }}
           actions-cache-folder: emsdk-cache-${{ env.EMSDK_VERSION }}
 
-      - name: Cache host llvm-tblgen
-        uses: actions/cache@v4
-        with:
-          path: |
-            build/llvm-host/bin/llvm-tblgen
-            build/llvm-host/bin/llvm-min-tblgen
-          key: host-tblgen-${{ runner.os }}-${{ steps.llvm.outputs.sha }}
-
       - name: Compute ccache keys
         id: cache_keys
         run: bash .github/scripts/shared/ccache_keys.sh wasm "${{ runner.os }}"
