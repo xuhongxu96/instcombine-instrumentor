@@ -37,8 +37,28 @@ interface ActiveModule {
 declare const self: DedicatedWorkerGlobalScope;
 
 let active: ActiveModule | null = null;
+const moduleCache = new Map<string, ActiveModule>();
+const REMOTE_BUNDLE_CACHE = "instcombine-wasm-v1";
+
+function sourceCacheKey(id: string, source: WasmSource): string {
+  return `${id}\u0000${source.kind}\u0000${source.jsUrl}\u0000${source.wasmUrl}`;
+}
+
+async function fetchWithPersistentCache(url: string): Promise<Response> {
+  const cache = await caches.open(REMOTE_BUNDLE_CACHE);
+  const cached = await cache.match(url);
+  if (cached) return cached;
+
+  const response = await fetch(url);
+  if (response.ok) await cache.put(url, response.clone());
+  return response;
+}
 
 async function loadFromSource(id: string, source: WasmSource): Promise<ActiveModule> {
+  const cacheKey = sourceCacheKey(id, source);
+  const cached = moduleCache.get(cacheKey);
+  if (cached) return cached;
+
   const revokeUrls: string[] = [];
   let jsImportUrl: string;
   let locateFile: ((path: string) => string) | undefined;
@@ -57,8 +77,8 @@ async function loadFromSource(id: string, source: WasmSource): Promise<ActiveMod
     // Content-Type unless we override it, so re-wrap with the right MIME types
     // before handing to import() / emscripten.
     const [jsResp, wasmResp] = await Promise.all([
-      fetch(source.jsUrl),
-      fetch(source.wasmUrl),
+      fetchWithPersistentCache(source.jsUrl),
+      fetchWithPersistentCache(source.wasmUrl),
     ]);
     if (!jsResp.ok) throw new Error(`fetch js failed: ${jsResp.status}`);
     if (!wasmResp.ok) throw new Error(`fetch wasm failed: ${wasmResp.status}`);
@@ -87,23 +107,18 @@ async function loadFromSource(id: string, source: WasmSource): Promise<ActiveMod
     },
     ...(locateFile ? { locateFile } : {}),
   });
-  return { id, promise, revokeUrls, stderr };
-}
-
-function teardown(m: ActiveModule | null): void {
-  if (!m) return;
-  for (const url of m.revokeUrls) URL.revokeObjectURL(url);
+  const activeModule = { id, promise, revokeUrls, stderr };
+  moduleCache.set(cacheKey, activeModule);
+  return activeModule;
 }
 
 self.onmessage = async (e: MessageEvent<IncomingMessage>) => {
   const msg = e.data;
   if (msg.type === "loadVersion") {
-    const prev = active;
     try {
       const next = await loadFromSource(msg.id, msg.source);
       await next.promise;
       active = next;
-      teardown(prev);
       self.postMessage({ type: "loaded", id: msg.id });
     } catch (err) {
       self.postMessage({

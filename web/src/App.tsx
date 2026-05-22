@@ -80,9 +80,8 @@ function pickInitialTag(manifest: WasmManifest): string | null {
 
 function formatLabel(r: WasmRelease): string {
   const base = r.name || r.tag;
-  const suffix = r.bundled ? "" : " (on demand)";
   const pre = r.prerelease ? " · pre-release" : "";
-  return `${base}${pre}${suffix}`;
+  return `${base}${pre}`;
 }
 
 export function App() {
