@@ -471,6 +471,33 @@ def update_core_cmake(file_path: Path) -> None:
     file_path.write_text(new_content)
 
 
+def update_mc_cmake_for_vcsrevision(llvm_repo: Path) -> None:
+    mc_cmake = llvm_repo / "llvm/lib/MC/CMakeLists.txt"
+    dxcontainer_info = llvm_repo / "llvm/lib/MC/DXContainerInfo.cpp"
+    if not mc_cmake.is_file() or not dxcontainer_info.is_file():
+        return
+
+    dx_content = dxcontainer_info.read_text()
+    if '#include "llvm/Support/VCSRevision.h"' not in dx_content:
+        return
+
+    print(f"Updating {mc_cmake} for llvm_vcsrevision_h...")
+    content = mc_cmake.read_text()
+    if "llvm_vcsrevision_h" in content:
+        return
+
+    depends_anchor = "  DEPENDS\n  intrinsics_gen\n"
+    if depends_anchor not in content:
+        raise RuntimeError(f"Could not find LLVMMC DEPENDS block in {mc_cmake}")
+
+    new_content = content.replace(
+        depends_anchor,
+        depends_anchor + "  llvm_vcsrevision_h\n",
+        1,
+    )
+    mc_cmake.write_text(new_content)
+
+
 def _collect_instrumented_names(llvm_repo: Path) -> set[bytes]:
     """First pass: scan all patched files and return the set of bare names of
     functions matching `_is_pointer_return`. These become the call-site
@@ -544,6 +571,7 @@ def patch_llvm(llvm_repo: Path) -> None:
             raise RuntimeError(f"Unknown task type: {kind}")
 
     update_core_cmake(llvm_repo / "llvm/lib/IR/CMakeLists.txt")
+    update_mc_cmake_for_vcsrevision(llvm_repo)
 
     print("Patching completed.")
 
