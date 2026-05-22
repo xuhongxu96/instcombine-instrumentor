@@ -103,7 +103,7 @@ jobs:
         env:
           CCACHE_DIR: ${{ github.workspace }}/.ccache
           CCACHE_COMPILERCHECK: string:emsdk-${{ env.EMSDK_VERSION }}
-        run: bash build_wasm.sh
+        run: bash .github/scripts/shared/retry.sh 3 1 -- bash build_wasm.sh
 
       - name: ccache stats
         if: always()
