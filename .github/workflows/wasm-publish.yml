@@ -38,7 +38,7 @@ on:
       max_tags:
         description: 'weekly-stable: max missing stable tags to build this run'
         required: false
-        default: '3'
+        default: '1'
       prune_main:
         description: 'daily-main: number of main-* snapshots to retain'
         required: false

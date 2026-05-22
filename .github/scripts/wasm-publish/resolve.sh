@@ -10,7 +10,7 @@
 #   LLVM_REF      — required if MODE=specific-ref. Accepts a single ref or
 #                   a comma-separated list (whitespace around commas is OK):
 #                   "llvmorg-22.1.6, llvmorg-21.1.4, abc123def456".
-#   MAX_TAGS      — required if MODE=weekly-stable (default 3)
+#   MAX_TAGS      — required if MODE=weekly-stable (default 1)
 #   FORCE_REBUILD — "true" to skip the "already present" filter
 #                   (weekly-stable only, defaults to false)
 #   WASM_PKGS_DIR — wasm-pkgs worktree path (default ./wasm-pkgs-branch)
@@ -26,7 +26,7 @@ REFS_FILE="${RUNNER_TEMP:-/tmp}/refs.tsv"
 case "$MODE" in
 weekly-stable)
     bash .github/scripts/wasm-publish/resolve_refs.sh \
-        weekly-stable "${MAX_TAGS:-3}" > "$REFS_FILE"
+        weekly-stable "${MAX_TAGS:-1}" > "$REFS_FILE"
     ;;
 daily-main)
     bash .github/scripts/wasm-publish/resolve_refs.sh daily-main > "$REFS_FILE"

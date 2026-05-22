@@ -78,10 +78,10 @@ resolve_existing_dir() {
 
 case "$MODE" in
 weekly-stable)
-    MAX_TAGS=${2:-3}
+    MAX_TAGS=${2:-1}
     UPSTREAM_TAGS=$(mktemp)
-    LOCAL_DIRS=$(mktemp)
-    trap 'rm -f "$UPSTREAM_TAGS" "$LOCAL_DIRS"' EXIT
+    EXISTING_TAGS=$(mktemp)
+    trap 'rm -f "$UPSTREAM_TAGS" "$EXISTING_TAGS"' EXIT
 
     git ls-remote --tags --refs "$UPSTREAM" 'llvmorg-*' \
         | awk '{print $2}' \
@@ -89,21 +89,42 @@ weekly-stable)
         | grep -E '^llvmorg-[0-9]+\.[0-9]+\.[0-9]+$' \
         > "$UPSTREAM_TAGS"
 
-    if [ "$FORCE_REBUILD" != "true" ]; then
-        if [ -d "$WASM_PKGS_DIR" ]; then
-            # Anything already present in a local wasm-pkgs checkout is
-            # excluded from the build list.
-            find "$WASM_PKGS_DIR" -mindepth 1 -maxdepth 1 -type d -printf '%f\n' \
-                | grep -E '^llvmorg-' > "$LOCAL_DIRS" || true
-        elif git fetch --no-tags --depth=1 origin wasm-pkgs >/dev/null 2>&1; then
-            # Build jobs no longer create a worktree up front, so fall back to
-            # listing the remote branch contents directly.
-            git ls-tree -d --name-only FETCH_HEAD \
-                | grep -E '^llvmorg-' > "$LOCAL_DIRS" || true
-        fi
+    # Discover what wasm-pkgs already has. Drives two filters: skip tags
+    # we've already built (skippable via FORCE_REBUILD), and never go older
+    # than the newest stable already published (always applied — backfilling
+    # older versions is the job of specific-ref / rebuild-existing).
+    if [ -d "$WASM_PKGS_DIR" ]; then
+        find "$WASM_PKGS_DIR" -mindepth 1 -maxdepth 1 -type d -printf '%f\n' \
+            | grep -E '^llvmorg-[0-9]+\.[0-9]+\.[0-9]+$' > "$EXISTING_TAGS" || true
+    elif git fetch --no-tags --depth=1 origin wasm-pkgs >/dev/null 2>&1; then
+        # Build jobs no longer create a worktree up front, so fall back to
+        # listing the remote branch contents directly.
+        git ls-tree -d --name-only FETCH_HEAD \
+            | grep -E '^llvmorg-[0-9]+\.[0-9]+\.[0-9]+$' > "$EXISTING_TAGS" || true
     fi
 
-    grep -vFxf "$LOCAL_DIRS" "$UPSTREAM_TAGS" \
+    if [ -s "$EXISTING_TAGS" ]; then
+        NEWEST_EXISTING=$(sort -V -r "$EXISTING_TAGS" | head -n 1)
+        # Drop upstream tags older than NEWEST_EXISTING. The cutoff itself is
+        # kept here so FORCE_REBUILD can re-pick the current head; without it
+        # the already-built filter below removes it.
+        FILTERED=$(mktemp)
+        {
+            printf '%s\n' "$NEWEST_EXISTING"
+            cat "$UPSTREAM_TAGS"
+        } | sort -V -u | awk -v cutoff="$NEWEST_EXISTING" '
+            $0 == cutoff { seen=1 }
+            seen { print }
+        ' > "$FILTERED"
+        mv "$FILTERED" "$UPSTREAM_TAGS"
+    fi
+
+    EXCLUDE_FILE=$EXISTING_TAGS
+    [ "$FORCE_REBUILD" = "true" ] && EXCLUDE_FILE=/dev/null
+
+    # `|| true` keeps `set -o pipefail` happy when every upstream tag is
+    # already published (steady state — grep returns 1 on no matches).
+    { grep -vFxf "$EXCLUDE_FILE" "$UPSTREAM_TAGS" || true; } \
         | sort -V -r \
         | head -n "$MAX_TAGS" \
         | sort -V \
