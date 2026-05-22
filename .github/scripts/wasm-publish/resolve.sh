@@ -1,13 +1,15 @@
 #!/usr/bin/env bash
-# Build the list of LLVM refs to publish this run. Wraps
-# resolve_wasm_pkgs_refs.sh by translating the mode-keyed env vars passed in
-# from wasm-publish.yml into the right positional invocation, writes the
-# resulting <dirname>\t<llvm_commit> table to a temp file, and emits
-# `refs_file=<path>` + `count=<N>` to $GITHUB_OUTPUT.
+# Build the list of LLVM refs to publish this run. Wraps resolve_refs.sh by
+# translating the mode-keyed env vars passed in from wasm-publish.yml into the
+# right positional invocation, writes the resulting <dirname>\t<llvm_commit>
+# table to a temp file, and emits `refs_file=<path>` + `count=<N>` to
+# $GITHUB_OUTPUT.
 #
 # Env:
 #   MODE          — weekly-stable | daily-main | specific-ref (required)
-#   LLVM_REF      — required if MODE=specific-ref
+#   LLVM_REF      — required if MODE=specific-ref. Accepts a single ref or
+#                   a comma-separated list (whitespace around commas is OK):
+#                   "llvmorg-22.1.6, llvmorg-21.1.4, abc123def456".
 #   MAX_TAGS      — required if MODE=weekly-stable (default 3)
 #   FORCE_REBUILD — "true" to skip the "already present" filter
 #                   (weekly-stable only, defaults to false)
@@ -34,8 +36,18 @@ specific-ref)
         echo "error: specific-ref requires LLVM_REF" >&2
         exit 2
     fi
-    bash .github/scripts/wasm-publish/resolve_refs.sh \
-        specific-ref "$LLVM_REF" > "$REFS_FILE"
+    : > "$REFS_FILE"
+    # Split LLVM_REF on commas; trim whitespace around each ref. Empty entries
+    # (trailing comma, double commas) are silently skipped. resolve_refs.sh
+    # validates each ref; any failure aborts via `set -e`.
+    IFS=',' read -ra REFS <<< "$LLVM_REF"
+    for REF in "${REFS[@]}"; do
+        REF="${REF#"${REF%%[![:space:]]*}"}"   # ltrim
+        REF="${REF%"${REF##*[![:space:]]}"}"   # rtrim
+        [ -z "$REF" ] && continue
+        bash .github/scripts/wasm-publish/resolve_refs.sh \
+            specific-ref "$REF" >> "$REFS_FILE"
+    done
     ;;
 *)
     echo "unknown mode: $MODE" >&2

@@ -30,7 +30,7 @@ on:
           - daily-main
           - specific-ref
       llvm_ref:
-        description: 'LLVM ref (specific-ref only): llvmorg-* tag or 7-40 hex commit SHA'
+        description: 'LLVM ref(s) (specific-ref only): llvmorg-* tag or 7-40 hex commit SHA. Accepts a comma-separated list to build multiple refs in one run (e.g. "llvmorg-22.1.6, llvmorg-21.1.4").'
         required: false
         default: ''
       max_tags:
