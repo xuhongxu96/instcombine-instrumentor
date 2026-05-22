@@ -141,25 +141,26 @@ export function App() {
   }, [releaseByTag]);
 
   // Fetch the manifest once on mount. Waterfall:
-  //   1. Same-origin `wasm/manifest.json` (the Pages-time builder emits this).
-  //   2. The remote `wasm-pkgs/manifest.json` if a URL is baked in via
-  //      VITE_REMOTE_MANIFEST_URL — covers `npm run dev` and misconfigured
-  //      Pages deploys.
+  //   1. The remote `wasm-pkgs/manifest.json` if a URL is baked in via
+  //      VITE_REMOTE_MANIFEST_URL — preferred so new published builds appear
+  //      without a Pages redeploy.
+  //   2. Same-origin `wasm/manifest.json` (the Pages-time builder emits this).
   //   3. fallbackManifest() — single entry pointing at whatever
   //      build_wasm.sh last dropped under public/wasm/.
   useEffect(() => {
     let cancelled = false;
     (async () => {
       let manifest: WasmManifest | null = null;
-      try {
-        manifest = await fetchManifest(`${getBaseUrl()}wasm/manifest.json`);
-      } catch {
-        const remote = getRemoteManifestUrl();
-        if (remote) {
-          try {
-            manifest = await fetchManifest(remote);
-          } catch { /* falls through to local fallback */ }
-        }
+      const remote = getRemoteManifestUrl();
+      if (remote) {
+        try {
+          manifest = await fetchManifest(remote);
+        } catch { /* falls through to same-origin manifest */ }
+      }
+      if (!manifest) {
+        try {
+          manifest = await fetchManifest(`${getBaseUrl()}wasm/manifest.json`);
+        } catch { /* falls through to local fallback */ }
       }
       if (cancelled) return;
       const m = manifest ?? fallbackManifest();

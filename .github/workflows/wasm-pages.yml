@@ -8,10 +8,9 @@ name: wasm-pages
 
 on:
   schedule:
-    # Mon 09:00 UTC — refresh the bundled snapshot of wasm-pkgs/manifest.json.
-    # Hybrid mode picks up new stable LLVM majors here; remote mode would
-    # actually not need this, but the redeploy is cheap and keeps the cached
-    # same-origin manifest from drifting.
+    # Mon 09:00 UTC — refresh the Pages deploy. Remote manifest is preferred
+    # at runtime, but we still rebuild periodically so the same-origin fallback
+    # stays fresh and any bundled assets remain current.
     - cron: '0 9 * * 1'
   push:
     branches: [main]
@@ -27,7 +26,7 @@ on:
       bundle_mode:
         description: 'How aggressively to bundle wasm into the Pages deploy'
         required: true
-        default: 'hybrid'
+        default: 'remote'
         type: choice
         options:
           - remote
@@ -73,7 +72,7 @@ jobs:
 
       - name: Build manifest
         env:
-          BUNDLE_MODE: ${{ github.event.inputs.bundle_mode || 'hybrid' }}
+          BUNDLE_MODE: ${{ github.event.inputs.bundle_mode || 'remote' }}
           BUNDLE_COUNT: ${{ github.event.inputs.bundle_count || '5' }}
           INCLUDE_COMMIT_COUNT: ${{ github.event.inputs.include_commit_count || '0' }}
           MUST_BUNDLE: ${{ github.event.inputs.must_bundle || '' }}
