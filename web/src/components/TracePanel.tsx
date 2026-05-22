@@ -1,4 +1,4 @@
-import MonacoEditor, { type OnMount } from "@monaco-editor/react";
+import MonacoEditor, { type BeforeMount, type OnMount } from "@monaco-editor/react";
 import { useCallback } from "react";
 import { StructuredTraceView } from "./StructuredTraceView";
 import { useColorScheme } from "./useColorScheme";
@@ -103,8 +103,14 @@ function registerTraceLang(monaco: typeof import("monaco-editor")) {
 export function TracePanel({ trace, wordWrap, viewMode, iterations, llvmRef }: TracePanelProps) {
   const { scheme } = useColorScheme();
   const traceTheme = scheme === "dark" ? TRACE_THEME_DARK : TRACE_THEME_LIGHT;
-  const handleMount = useCallback<OnMount>((editor, monaco) => {
+  // Register the language + themes BEFORE the editor is instantiated. Monaco's
+  // setTheme is a global, page-wide operation; if @monaco-editor/react applies
+  // our custom theme name before it has been defined, Monaco silently falls
+  // back to default light, flipping every other editor on the page too.
+  const handleBeforeMount = useCallback<BeforeMount>((monaco) => {
     registerTraceLang(monaco);
+  }, []);
+  const handleMount = useCallback<OnMount>((editor, monaco) => {
     monaco.editor.setModelLanguage(editor.getModel()!, TRACE_LANG_ID);
     editor.revealLine(1);
   }, []);
@@ -117,6 +123,7 @@ export function TracePanel({ trace, wordWrap, viewMode, iterations, llvmRef }: T
     <MonacoEditor
       value={trace || PLACEHOLDER}
       defaultLanguage={TRACE_LANG_ID}
+      beforeMount={handleBeforeMount}
       onMount={handleMount}
       theme={traceTheme}
       options={{
