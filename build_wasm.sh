@@ -46,7 +46,7 @@ if [ ! -x "$HOST_TBLGEN" ] || [ ! -x "$HOST_MIN_TBLGEN" ]; then
         -DLLVM_INCLUDE_EXAMPLES=OFF \
         -DLLVM_ENABLE_PROJECTS="" \
         -DLLVM_CCACHE_BUILD=ON \
-        -DLLVM_CCACHE_MAXSIZE=200G
+        -DLLVM_CCACHE_MAXSIZE=5G
     cmake --build "$HOST_BUILD_DIR" -j "$(nproc)" --target llvm-tblgen llvm-min-tblgen
 else
     echo "=== Stage 1: reusing cached llvm-tblgen at $HOST_TBLGEN ==="
@@ -80,7 +80,7 @@ emcmake cmake -GNinja \
     -DLLVM_EXTERNAL_PROJECTS=instcombine_driver \
     -DLLVM_EXTERNAL_INSTCOMBINE_DRIVER_SOURCE_DIR="$DRIVER_DIR_ABS" \
     -DLLVM_CCACHE_BUILD=ON \
-    -DLLVM_CCACHE_MAXSIZE=200G
+    -DLLVM_CCACHE_MAXSIZE=5G
 
 cmake --build "$WASM_BUILD_DIR" -j "$(nproc)" --target instcombine_driver
 
