@@ -55,14 +55,6 @@ on:
 permissions:
   contents: write
 
-concurrency:
-  # Single global group: every run of this workflow pushes to the same branch,
-  # so serialize all of them. A weekly-stable run that's still building will
-  # queue (not cancel) the daily-main run that fires at the same hour on
-  # Mondays, and vice versa.
-  group: wasm-pkgs
-  cancel-in-progress: false
-
 env:
   EMSDK_VERSION: 5.0.7
 
@@ -70,6 +62,11 @@ jobs:
   build:
     runs-on: ubuntu-latest
     timeout-minutes: 350
+    outputs:
+      mode: ${{ steps.dispatch.outputs.mode }}
+      prune_main: ${{ steps.dispatch.outputs.prune_main }}
+      dry_run: ${{ steps.dispatch.outputs.dry_run }}
+      count: ${{ steps.resolve.outputs.count }}
     steps:
       - uses: actions/checkout@v4
 
@@ -103,11 +100,6 @@ jobs:
           version: ${{ env.EMSDK_VERSION }}
           actions-cache-folder: emsdk-cache-${{ env.EMSDK_VERSION }}
 
-      - name: Set up wasm-pkgs worktree
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: bash .github/scripts/wasm-publish/setup_worktree.sh
-
       - name: Resolve build list
         id: resolve
         env:
@@ -116,7 +108,6 @@ jobs:
           LLVM_REF: ${{ steps.dispatch.outputs.llvm_ref }}
           MAX_TAGS: ${{ steps.dispatch.outputs.max_tags }}
           FORCE_REBUILD: ${{ steps.dispatch.outputs.force_rebuild }}
-          WASM_PKGS_DIR: ./wasm-pkgs-branch
         run: bash .github/scripts/wasm-publish/resolve.sh
 
       - name: Short-circuit if nothing to build
@@ -154,26 +145,61 @@ jobs:
           CCACHE_DIR: ${{ github.workspace }}/.ccache
           CCACHE_COMPILERCHECK: string:emsdk-${{ env.EMSDK_VERSION }}
           REFS_FILE: ${{ steps.resolve.outputs.refs_file }}
+          STAGING_DIR: ${{ github.workspace }}/wasm-publish-staging/releases
         run: |
           set -euo pipefail
+          mkdir -p "$STAGING_DIR"
           while IFS=$'\t' read -r DIRNAME LLVM_COMMIT; do
               [ -z "$DIRNAME" ] && continue
               bash .github/scripts/wasm-publish/build_one.sh "$DIRNAME" "$LLVM_COMMIT"
           done < "$REFS_FILE"
-
-      - name: Finalize (prune + manifest + commit + push)
-        if: steps.resolve.outputs.count != '0'
-        env:
-          MODE: ${{ steps.dispatch.outputs.mode }}
-          PRUNE_MAIN: ${{ steps.dispatch.outputs.prune_main }}
-          DRY_RUN: ${{ steps.dispatch.outputs.dry_run }}
-          REFS_FILE: ${{ steps.resolve.outputs.refs_file }}
-          GH_OWNER: ${{ github.repository_owner }}
-          GH_REPO: ${{ github.event.repository.name }}
-        run: bash .github/scripts/wasm-publish/finalize.sh
+          cp "$REFS_FILE" "$GITHUB_WORKSPACE/wasm-publish-staging/refs.tsv"
 
       - name: ccache stats
         if: always() && steps.resolve.outputs.count != '0'
         env:
           CCACHE_DIR: ${{ github.workspace }}/.ccache
         run: ccache -s -v || ccache -s || true
+
+      - name: Upload publish staging
+        if: steps.resolve.outputs.count != '0'
+        uses: actions/upload-artifact@v4
+        with:
+          name: wasm-publish-staging
+          path: wasm-publish-staging
+          if-no-files-found: error
+          retention-days: 1
+
+  finalize:
+    needs: build
+    if: needs.build.outputs.count != '0'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    concurrency:
+      group: wasm-pkgs
+      cancel-in-progress: false
+      queue: max
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download publish staging
+        uses: actions/download-artifact@v4
+        with:
+          name: wasm-publish-staging
+          path: wasm-publish-staging
+
+      - name: Set up wasm-pkgs worktree
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: bash .github/scripts/wasm-publish/setup_worktree.sh
+
+      - name: Finalize (prune + manifest + commit + push)
+        env:
+          MODE: ${{ needs.build.outputs.mode }}
+          PRUNE_MAIN: ${{ needs.build.outputs.prune_main }}
+          DRY_RUN: ${{ needs.build.outputs.dry_run }}
+          REFS_FILE: ${{ github.workspace }}/wasm-publish-staging/refs.tsv
+          STAGING_DIR: ${{ github.workspace }}/wasm-publish-staging/releases
+          GH_OWNER: ${{ github.repository_owner }}
+          GH_REPO: ${{ github.event.repository.name }}
+        run: bash .github/scripts/wasm-publish/finalize.sh

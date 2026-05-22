@@ -17,7 +17,8 @@
 #   FORCE_REBUILD — "true" to skip the "already present in wasm-pkgs" check
 #                   (weekly-stable only — daily-main always rebuilds)
 #   WASM_PKGS_DIR — wasm-pkgs worktree path (default ./wasm-pkgs-branch);
-#                   only used for the weekly-stable existence check
+#                   only used for the weekly-stable existence check when a
+#                   local checkout already exists
 #   UPSTREAM      — upstream LLVM repo URL (default github.com/llvm/llvm-project)
 #
 # Requires `gh` on PATH and authenticated (for daily-main / specific-ref SHA
@@ -61,10 +62,18 @@ weekly-stable)
         | grep -E '^llvmorg-[0-9]+\.[0-9]+\.[0-9]+$' \
         > "$UPSTREAM_TAGS"
 
-    if [ "$FORCE_REBUILD" != "true" ] && [ -d "$WASM_PKGS_DIR" ]; then
-        # Anything already present in wasm-pkgs is excluded from the build list.
-        find "$WASM_PKGS_DIR" -mindepth 1 -maxdepth 1 -type d -printf '%f\n' \
-            | grep -E '^llvmorg-' > "$LOCAL_DIRS" || true
+    if [ "$FORCE_REBUILD" != "true" ]; then
+        if [ -d "$WASM_PKGS_DIR" ]; then
+            # Anything already present in a local wasm-pkgs checkout is
+            # excluded from the build list.
+            find "$WASM_PKGS_DIR" -mindepth 1 -maxdepth 1 -type d -printf '%f\n' \
+                | grep -E '^llvmorg-' > "$LOCAL_DIRS" || true
+        elif git fetch --no-tags --depth=1 origin wasm-pkgs >/dev/null 2>&1; then
+            # Build jobs no longer create a worktree up front, so fall back to
+            # listing the remote branch contents directly.
+            git ls-tree -d --name-only FETCH_HEAD \
+                | grep -E '^llvmorg-' > "$LOCAL_DIRS" || true
+        fi
     fi
 
     grep -vFxf "$LOCAL_DIRS" "$UPSTREAM_TAGS" \

@@ -1,10 +1,11 @@
 #!/usr/bin/env bash
-# Finalize a wasm-publish.yml run after all per-ref builds have copied their
-# outputs into the wasm-pkgs worktree:
-#   1. Prune older main-* snapshots (daily-main only) so the branch doesn't
+# Finalize a wasm-publish.yml run after all per-ref builds have staged their
+# outputs:
+#   1. Copy the staged outputs into the wasm-pkgs worktree.
+#   2. Prune older main-* snapshots (daily-main only) so the branch doesn't
 #      grow unbounded.
-#   2. Regenerate manifest.json from the directory listing.
-#   3. Commit and push (unless DRY_RUN=true). A no-op (nothing staged) exits
+#   3. Regenerate manifest.json from the directory listing.
+#   4. Commit and push (unless DRY_RUN=true). A no-op (nothing staged) exits
 #      cleanly so re-runs against an already-published ref don't error.
 #
 # Env:
@@ -15,6 +16,7 @@
 #                   for the commit subject)
 #   GH_OWNER      — github.repository_owner — passed to manifest builder
 #   GH_REPO       — github.event.repository.name — passed to manifest builder
+#   STAGING_DIR   — directory containing <dirname>/{js,wasm} outputs
 #   WASM_PKGS_DIR — wasm-pkgs worktree path (default ./wasm-pkgs-branch)
 
 set -euo pipefail
@@ -25,7 +27,18 @@ set -euo pipefail
 : "${REFS_FILE:?REFS_FILE required}"
 : "${GH_OWNER:?GH_OWNER required}"
 : "${GH_REPO:?GH_REPO required}"
+STAGING_DIR=${STAGING_DIR:-./wasm-publish-staging}
 WASM_PKGS_DIR=${WASM_PKGS_DIR:-./wasm-pkgs-branch}
+
+if [ -d "$STAGING_DIR" ]; then
+    find "$STAGING_DIR" -mindepth 1 -maxdepth 1 -type d -print0 \
+        | while IFS= read -r -d '' SRC; do
+            DEST="$WASM_PKGS_DIR/$(basename "$SRC")"
+            rm -rf "$DEST"
+            mkdir -p "$DEST"
+            cp -R "$SRC"/. "$DEST"/
+        done
+fi
 
 if [ "$MODE" = "daily-main" ]; then
     pushd "$WASM_PKGS_DIR" >/dev/null
