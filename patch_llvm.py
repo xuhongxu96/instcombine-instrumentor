@@ -222,6 +222,26 @@ def _is_inside_fuzz_wrap(node: Node, content: bytes) -> bool:
     return False
 
 
+def _is_address_of_operand(node: Node, content: bytes) -> bool:
+    """True if `node` is the immediate operand of a unary address-of (`&`).
+
+    Clang treats the result of a GCC statement-expression as a temporary
+    rvalue, so `&__llvm_fuzz_call(expr)` fails even when `expr` itself yields
+    an lvalue/reference (e.g. `&CI->getValue()` in InstructionSimplify.cpp).
+    Walks through parenthesized_expression layers between the call and the
+    address-of so `&(foo())` is caught too.
+    """
+    parent = node.parent
+    while parent is not None and parent.type == "parenthesized_expression":
+        parent = parent.parent
+    if parent is None or parent.type != "pointer_expression":
+        return False
+    op = parent.child_by_field_name("operator")
+    if op is None:
+        return False
+    return content[op.start_byte:op.end_byte] == b"&"
+
+
 def _collect_wrap_call_ids(
     body: Node,
     content: bytes,
@@ -240,6 +260,8 @@ def _collect_wrap_call_ids(
             if func_text in (b"__llvm_fuzz_call", b"__llvm_fuzz_record"):
                 continue
         if _is_inside_fuzz_wrap(call, content):
+            continue
+        if _is_address_of_operand(call, content):
             continue
         bare = _extract_callee_name(func)
         if bare is None:
