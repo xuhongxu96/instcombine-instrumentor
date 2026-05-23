@@ -1,6 +1,29 @@
 const TREE_PREFIX = "/tree/";
 const COMMIT_PREFIX = "/commit/";
+const COMMITS_PREFIX = "/commits/";
 const HEX_RE = /^[0-9a-fA-F]{7,40}$/;
+
+function parseRepoRefPath(path, prefix, expectedPattern) {
+  const idx = path.indexOf(prefix);
+  if (idx <= 0) return null;
+
+  const repoPath = path.slice(1, idx);
+  const ref = decodeURIComponent(path.slice(idx + prefix.length));
+  const parts = repoPath.split("/");
+  if (parts.length !== 2 || !ref) {
+    throw new Error(expectedPattern);
+  }
+
+  const [owner, repo] = parts;
+  return {
+    owner,
+    repo,
+    sourceRepoUrl: `https://github.com/${owner}/${repo}`,
+    llvmRemote: `https://github.com/${owner}/${repo}.git`,
+    sourceKind: HEX_RE.test(ref) ? "commit" : "branch",
+    sourceRef: ref,
+  };
+}
 
 export function sanitizeBranchComponent(value) {
   return value
@@ -21,46 +44,30 @@ export function parseGitHubSourceUrl(input) {
   if (url.hostname !== "github.com") throw new Error("only github.com URLs are supported");
 
   const path = url.pathname.replace(/\/+$/, "");
-  const treeIdx = path.indexOf(TREE_PREFIX);
-  const commitIdx = path.indexOf(COMMIT_PREFIX);
+  const treeParsed = parseRepoRefPath(
+    path,
+    TREE_PREFIX,
+    "expected https://github.com/<owner>/<repo>/tree/<branch-or-sha>",
+  );
+  if (treeParsed) return treeParsed;
 
-  if (treeIdx > 0) {
-    const repoPath = path.slice(1, treeIdx);
-    const ref = decodeURIComponent(path.slice(treeIdx + TREE_PREFIX.length));
-    const parts = repoPath.split("/");
-    if (parts.length !== 2 || !ref) {
-      throw new Error("expected https://github.com/<owner>/<repo>/tree/<branch-or-sha>");
-    }
-    const [owner, repo] = parts;
-    return {
-      owner,
-      repo,
-      sourceRepoUrl: `https://github.com/${owner}/${repo}`,
-      llvmRemote: `https://github.com/${owner}/${repo}.git`,
-      sourceKind: HEX_RE.test(ref) ? "commit" : "branch",
-      sourceRef: ref,
-    };
-  }
+  const commitParsed = parseRepoRefPath(
+    path,
+    COMMIT_PREFIX,
+    "expected https://github.com/<owner>/<repo>/commit/<branch-or-sha>",
+  );
+  if (commitParsed) return commitParsed;
 
-  if (commitIdx > 0) {
-    const repoPath = path.slice(1, commitIdx);
-    const ref = decodeURIComponent(path.slice(commitIdx + COMMIT_PREFIX.length));
-    const parts = repoPath.split("/");
-    if (parts.length !== 2 || !ref) {
-      throw new Error("expected https://github.com/<owner>/<repo>/commit/<branch-or-sha>");
-    }
-    const [owner, repo] = parts;
-    return {
-      owner,
-      repo,
-      sourceRepoUrl: `https://github.com/${owner}/${repo}`,
-      llvmRemote: `https://github.com/${owner}/${repo}.git`,
-      sourceKind: HEX_RE.test(ref) ? "commit" : "branch",
-      sourceRef: ref,
-    };
-  }
+  const commitsParsed = parseRepoRefPath(
+    path,
+    COMMITS_PREFIX,
+    "expected https://github.com/<owner>/<repo>/commits/<branch-or-sha>",
+  );
+  if (commitsParsed) return commitsParsed;
 
-  throw new Error("unsupported GitHub URL; expected /tree/<branch-or-sha> or /commit/<branch-or-sha>");
+  throw new Error(
+    "unsupported GitHub URL; expected /tree/<branch-or-sha>, /commit/<branch-or-sha>, or /commits/<branch-or-sha>",
+  );
 }
 
 export function artifactBranchName(owner, repo) {

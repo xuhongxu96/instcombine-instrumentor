@@ -8,7 +8,7 @@ import {
   sanitizeBranchComponent,
 } from "./resolve_custom_source_lib.mjs";
 
-for (const prefix of ["tree", "commit"]) {
+for (const prefix of ["tree", "commit", "commits"]) {
   test(`parses branch ${prefix} URLs`, () => {
     const parsed = parseGitHubSourceUrl(`https://github.com/xhx/fork-llvm/${prefix}/xhx/fix-173706`);
     assert.deepEqual(parsed, {
@@ -35,6 +35,20 @@ for (const prefix of ["tree", "commit"]) {
     });
   });
 }
+
+test("parses trailing-slash commits branch URLs", () => {
+  const parsed = parseGitHubSourceUrl(
+    "https://github.com/xuhongxu96/llvm-project/commits/xhx/fix-173706/",
+  );
+  assert.deepEqual(parsed, {
+    owner: "xuhongxu96",
+    repo: "llvm-project",
+    sourceRepoUrl: "https://github.com/xuhongxu96/llvm-project",
+    llvmRemote: "https://github.com/xuhongxu96/llvm-project.git",
+    sourceKind: "branch",
+    sourceRef: "xhx/fix-173706",
+  });
+});
 
 test("rejects unsupported hosts and paths", () => {
   assert.throws(
