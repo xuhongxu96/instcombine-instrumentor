@@ -1,4 +1,4 @@
-# $TARGET_BRANCH
+# wasm-artifacts-xuhongxu96-llvm-project
 
 This branch is bot-managed by the wasm publish workflows. Do not edit by hand
 unless you also own the automation that writes here.
