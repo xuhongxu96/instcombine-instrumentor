@@ -1,0 +1,175 @@
+name: wasm-custom-publish
+
+on:
+  workflow_dispatch:
+    inputs:
+      llvm_source_url:
+        description: "GitHub LLVM source URL: /tree/<branch-or-sha> or /commit/<sha>"
+        required: true
+        type: string
+      dry_run:
+        description: "Build but do not push the artifact branch"
+        required: false
+        default: false
+        type: boolean
+
+permissions:
+  contents: write
+
+env:
+  EMSDK_VERSION: 5.0.7
+
+jobs:
+  resolve:
+    name: Resolve custom source
+    runs-on: ubuntu-latest
+    outputs:
+      dry_run: ${{ github.event.inputs.dry_run }}
+      llvm_remote: ${{ steps.resolve.outputs.llvm_remote }}
+      source_repo_url: ${{ steps.resolve.outputs.source_repo_url }}
+      source_ref: ${{ steps.resolve.outputs.source_ref }}
+      source_kind: ${{ steps.resolve.outputs.source_kind }}
+      resolved_sha: ${{ steps.resolve.outputs.resolved_sha }}
+      target_branch: ${{ steps.resolve.outputs.target_branch }}
+      publish_dir: ${{ steps.resolve.outputs.publish_dir }}
+      display_name: ${{ steps.resolve.outputs.display_name }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Resolve source URL
+        id: resolve
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          node .github/scripts/wasm-publish/resolve_custom_source.mjs \
+            --llvm-source-url "${{ github.event.inputs.llvm_source_url }}" \
+            --out-dir "$RUNNER_TEMP/wasm-custom-resolve"
+
+      - name: Upload resolved metadata
+        uses: actions/upload-artifact@v4
+        with:
+          name: wasm-custom-resolve
+          path: |
+            ${{ steps.resolve.outputs.refs_file }}
+            ${{ steps.resolve.outputs.metadata_file }}
+          if-no-files-found: error
+          retention-days: 1
+
+  build:
+    name: Build (${{ needs.resolve.outputs.display_name }})
+    needs: resolve
+    runs-on: self-hosted
+    timeout-minutes: 350
+    outputs:
+      dry_run: ${{ needs.resolve.outputs.dry_run }}
+      target_branch: ${{ needs.resolve.outputs.target_branch }}
+      publish_dir: ${{ needs.resolve.outputs.publish_dir }}
+      display_name: ${{ needs.resolve.outputs.display_name }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download resolved metadata
+        uses: actions/download-artifact@v4
+        with:
+          name: wasm-custom-resolve
+          path: wasm-custom-resolve
+
+      - name: Install host toolchain
+        run: bash .github/scripts/shared/install_toolchain.sh
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v3
+        with:
+          enable-cache: true
+
+      - name: Install Python deps
+        run: uv sync
+
+      - name: Set up emsdk
+        uses: emscripten-core/setup-emsdk@v16
+        with:
+          version: ${{ env.EMSDK_VERSION }}
+          actions-cache-folder: emsdk-cache-${{ env.EMSDK_VERSION }}
+
+      - name: Compute ccache keys
+        id: cache_keys
+        run: |
+          bash .github/scripts/shared/ccache_keys.sh wasm "${{ runner.os }}" \
+            --branch "${{ needs.resolve.outputs.target_branch }}"
+
+      - name: Restore ccache
+        id: ccache-restore
+        uses: actions/cache@v4
+        with:
+          path: .ccache
+          key: ${{ steps.cache_keys.outputs.key }}
+          restore-keys: ${{ steps.cache_keys.outputs.restore_keys }}
+
+      - name: Reset ccache stats
+        env:
+          CCACHE_DIR: ${{ github.workspace }}/.ccache
+        run: ccache -z || true
+
+      - name: Build custom wasm bundle
+        env:
+          CCACHE_DIR: ${{ github.workspace }}/.ccache
+          CCACHE_COMPILERCHECK: string:emsdk-${{ env.EMSDK_VERSION }}
+          LLVM_REMOTE: ${{ needs.resolve.outputs.llvm_remote }}
+          STAGING_DIR: ${{ github.workspace }}/wasm-publish-staging/releases
+          PUBLISH_DIR: ${{ needs.resolve.outputs.publish_dir }}
+          LLVM_SHA: ${{ needs.resolve.outputs.resolved_sha }}
+        run: |
+          set -euo pipefail
+          mkdir -p "$STAGING_DIR/$PUBLISH_DIR"
+          bash .github/scripts/wasm-publish/build_one.sh "$PUBLISH_DIR" "$LLVM_SHA"
+          cp wasm-custom-resolve/metadata.json "$STAGING_DIR/$PUBLISH_DIR/metadata.json"
+          printf '%s\t%s\n' "$PUBLISH_DIR" "$LLVM_SHA" > "$GITHUB_WORKSPACE/wasm-publish-staging/refs.tsv"
+
+      - name: ccache stats
+        if: always()
+        env:
+          CCACHE_DIR: ${{ github.workspace }}/.ccache
+        run: ccache -s -v || ccache -s || true
+
+      - name: Upload publish staging
+        uses: actions/upload-artifact@v4
+        with:
+          name: wasm-custom-staging
+          path: wasm-publish-staging
+          if-no-files-found: error
+          retention-days: 1
+
+  finalize:
+    name: Finalize (${{ needs.build.outputs.display_name }})
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    concurrency:
+      group: ${{ needs.build.outputs.target_branch }}
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download publish staging
+        uses: actions/download-artifact@v4
+        with:
+          name: wasm-custom-staging
+          path: wasm-publish-staging
+
+      - name: Set up target worktree
+        env:
+          TARGET_BRANCH: ${{ needs.build.outputs.target_branch }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: bash .github/scripts/wasm-publish/setup_worktree.sh
+
+      - name: Finalize custom publish
+        env:
+          MODE: specific-ref
+          PRUNE_MAIN: "0"
+          DRY_RUN: ${{ needs.build.outputs.dry_run }}
+          TARGET_BRANCH: ${{ needs.build.outputs.target_branch }}
+          REFS_FILE: ${{ github.workspace }}/wasm-publish-staging/refs.tsv
+          STAGING_DIR: ${{ github.workspace }}/wasm-publish-staging/releases
+          GH_OWNER: ${{ github.repository_owner }}
+          GH_REPO: ${{ github.event.repository.name }}
+        run: bash .github/scripts/wasm-publish/finalize.sh

@@ -8,9 +8,16 @@
 // __llvm_fuzz_record_replace inside Value::doRAUW) additionally shift lines below
 // those points, but those are narrow windows we don't try to model.
 
+import type { WasmRelease } from "../wasm/manifest";
+
 const REPO_BASE = "https://github.com/llvm/llvm-project";
 const LLVM_PROJECT_SEP = "llvm-project/";
 const LINE_OFFSET = -1; // undo the include prepend
+
+export interface GitHubSourceRef {
+  repoUrl: string;
+  ref: string;
+}
 
 // Manifest tags come from the wasm-pkgs branch directory names:
 //   "llvmorg-X.Y.Z[-rcN]"        → upstream tag of the same name
@@ -29,6 +36,15 @@ export function llvmRefFromManifestTag(tag: string | null): string | null {
   return null;
 }
 
+export function githubSourceFromRelease(release: WasmRelease | null): GitHubSourceRef | null {
+  if (!release) return null;
+  if (release.sourceRepoUrl && release.sourceRef) {
+    return { repoUrl: release.sourceRepoUrl, ref: release.sourceRef };
+  }
+  const ref = llvmRefFromManifestTag(release.tag);
+  return ref ? { repoUrl: REPO_BASE, ref } : null;
+}
+
 // Strip the build-relative "../../thirdparty/llvm-project/" prefix so the UI
 // shows the path as it appears in the upstream repo.
 export function displayPath(file: string): string {
@@ -45,11 +61,11 @@ export function splitLoc(loc: string): { file: string; line: number } | null {
   return { file: loc.slice(0, i), line: n };
 }
 
-export function githubUrlFor(file: string, line: number, ref: string | null): string | null {
-  if (!ref) return null;
+export function githubUrlFor(file: string, line: number, source: GitHubSourceRef | null): string | null {
+  if (!source) return null;
   const idx = file.indexOf(LLVM_PROJECT_SEP);
   if (idx < 0) return null;
   const repoPath = file.slice(idx + LLVM_PROJECT_SEP.length);
   const adjusted = Math.max(1, line + LINE_OFFSET);
-  return `${REPO_BASE}/blob/${ref}/${repoPath}#L${adjusted}`;
+  return `${source.repoUrl}/blob/${source.ref}/${repoPath}#L${adjusted}`;
 }

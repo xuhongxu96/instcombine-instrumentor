@@ -225,6 +225,7 @@ jobs:
 
       - name: Set up wasm-pkgs worktree
         env:
+          TARGET_BRANCH: wasm-pkgs
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: bash .github/scripts/wasm-publish/setup_worktree.sh
 
@@ -233,6 +234,7 @@ jobs:
           MODE: ${{ needs.build.outputs.mode }}
           PRUNE_MAIN: ${{ needs.build.outputs.prune_main }}
           DRY_RUN: ${{ needs.build.outputs.dry_run }}
+          TARGET_BRANCH: wasm-pkgs
           REFS_FILE: ${{ github.workspace }}/wasm-publish-staging/refs.tsv
           STAGING_DIR: ${{ github.workspace }}/wasm-publish-staging/releases
           GH_OWNER: ${{ github.repository_owner }}
