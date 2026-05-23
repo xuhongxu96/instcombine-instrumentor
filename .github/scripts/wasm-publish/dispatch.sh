@@ -5,7 +5,7 @@
 # operator-supplied knobs apply.
 #
 # Schedules don't carry workflow_dispatch inputs, so we encode the mode in the
-# cron expression — '0 5 * * 1' = weekly-stable, '0 6 * * *' = daily-main.
+# cron expression — '0 5 * * 1' = weekly-stable, '0 6 */3 * *' = daily-main.
 #
 # Env:
 #   EVENT                — github.event_name
@@ -25,7 +25,7 @@ MODE=""
 if [ "${EVENT:-}" = "schedule" ]; then
     case "${SCHEDULE:-}" in
         "0 5 * * 1") MODE=weekly-stable ;;
-        "0 6 * * *") MODE=daily-main ;;
+        "0 6 */3 * *") MODE=daily-main ;;
         *) echo "unknown cron schedule: ${SCHEDULE:-}" >&2; exit 2 ;;
     esac
 else

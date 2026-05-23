@@ -5,7 +5,7 @@
 //
 // Directory naming convention (set by wasm-publish.yml):
 //   llvmorg-X.Y.Z[-rcN]        — stable / rc upstream LLVM tag (kind=tag)
-//   main-<YYMMDD>-<sha12>      — daily LLVM main snapshot       (kind=commit)
+//   main-<YYMMDD>-<sha12>      — scheduled LLVM main snapshot   (kind=commit)
 //
 // Each qualifying dir becomes a WasmRelease entry with absolute
 // raw.githubusercontent.com URLs. `bundled: false` everywhere — bundling

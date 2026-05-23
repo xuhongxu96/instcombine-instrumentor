@@ -44,7 +44,7 @@ hand — any changes will be overwritten.
 
 Each subdirectory contains an InstCombine instrumentor wasm build for a
 specific LLVM version (`llvmorg-X.Y.Z[-rcN]/` for stable tags,
-`main-<YYMMDD>-<sha12>/` for daily LLVM main snapshots). The `manifest.json`
+`main-<YYMMDD>-<sha12>/` for scheduled LLVM main snapshots). The `manifest.json`
 at the root is fetched directly by the webapp at runtime via
 `raw.githubusercontent.com`.
 EOF

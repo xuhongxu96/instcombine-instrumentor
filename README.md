@@ -75,7 +75,7 @@ the patcher reads them at import time.
 
 Wasm artifacts for many LLVM versions live on the orphan `wasm-pkgs` branch
 of this repo, one directory per ref (`llvmorg-X.Y.Z[-rcN]/` for stable tags,
-`main-<YYMMDD>-<sha12>/` for daily LLVM-main snapshots). The webapp fetches
+`main-<YYMMDD>-<sha12>/` for every-three-day LLVM-main snapshots). The webapp fetches
 `manifest.json` from the branch via `raw.githubusercontent.com` at startup,
 so new builds appear in the version picker without redeploying Pages.
 

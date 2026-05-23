@@ -17,8 +17,8 @@ on:
   schedule:
     # Mon 05:00 UTC — sync recent stable LLVM tags.
     - cron: '0 5 * * 1'
-    # Daily 06:00 UTC — snapshot LLVM main HEAD.
-    - cron: '0 6 * * *'
+    # Every 3 days at 06:00 UTC — snapshot LLVM main HEAD.
+    - cron: '0 6 */3 * *'
   workflow_dispatch:
     inputs:
       mode:
