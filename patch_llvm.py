@@ -131,6 +131,39 @@ def create_fuzz_runtime(llvm_repo: Path) -> None:
     source_path.write_text(FUZZ_RUNTIME_CPP)
 
 
+def detect_llvm_major_version(llvm_repo: Path) -> int:
+    version_files = [
+        llvm_repo / "llvm/CMakeLists.txt",
+        llvm_repo / "cmake/Modules/LLVMVersion.cmake",
+    ]
+    version_re = re.compile(r"^[ \t]*set\(LLVM_VERSION_MAJOR[ \t]+([0-9]+)\)")
+    for version_file in version_files:
+        if not version_file.is_file():
+            continue
+        for line in version_file.read_text().splitlines():
+            match = version_re.match(line)
+            if match:
+                return int(match.group(1))
+    raise RuntimeError(f"Could not detect LLVM_VERSION_MAJOR under {llvm_repo}")
+
+
+def patch_signals_header_for_older_llvm(llvm_repo: Path, llvm_version_major: int) -> None:
+    if llvm_version_major > 13:
+        return
+
+    signals_h = llvm_repo / "llvm/include/llvm/Support/Signals.h"
+    print(f"Patching {signals_h} for LLVM {llvm_version_major}...")
+    content = signals_h.read_text()
+    if "#include <stdint>" in content:
+        return
+
+    include_anchor = "#include <string>"
+    if include_anchor not in content:
+        raise RuntimeError(f"Could not find include anchor in {signals_h}")
+
+    signals_h.write_text(content.replace(include_anchor, '#include <stdint>\n' + include_anchor, 1))
+
+
 def _is_pointer_return(prefix_text: bytes, declarator: Node, allow_star_in_prefix: bool) -> bool:
     type_match = any(hint in prefix_text for hint in POINTER_TYPE_HINTS)
     if not type_match:
@@ -539,7 +572,11 @@ def _collect_instrumented_names(llvm_repo: Path) -> set[bytes]:
 
 
 def patch_llvm(llvm_repo: Path) -> None:
+    llvm_version_major = detect_llvm_major_version(llvm_repo)
+    print(f"Detected LLVM_VERSION_MAJOR={llvm_version_major}.")
+
     create_fuzz_runtime(llvm_repo)
+    patch_signals_header_for_older_llvm(llvm_repo, llvm_version_major)
 
     print("Collecting instrumented function names (first pass)...")
     instrumented_names = _collect_instrumented_names(llvm_repo)
