@@ -32,9 +32,34 @@ export CCACHE_COMPILERCHECK=${CCACHE_COMPILERCHECK:-"%compiler% --version"}
 export CCACHE_NOHASHDIR=${CCACHE_NOHASHDIR:-1}
 
 HOST_TBLGEN="$HOST_BUILD_DIR/bin/llvm-tblgen"
-HOST_MIN_TBLGEN="$HOST_BUILD_DIR/bin/llvm-min-tblgen"
 
-echo "=== Stage 1: building native llvm-tblgen at $HOST_BUILD_DIR ==="
+# llvm-min-tblgen was introduced upstream in LLVM 17 (commit 243e8f8d23ac,
+# May 2023). For LLVM <= 16 the target doesn't exist, so asking cmake to
+# build it would fail the whole stage. Parse LLVM_VERSION_MAJOR from
+# whichever file defines it on the target tree — older trees set it in
+# llvm/CMakeLists.txt, newer trees in cmake/Modules/LLVMVersion.cmake.
+LLVM_VERSION_FILES=()
+if [ -f "$LLVM_DIR/llvm/CMakeLists.txt" ]; then
+    LLVM_VERSION_FILES+=("$LLVM_DIR/llvm/CMakeLists.txt")
+fi
+if [ -f "$LLVM_DIR/cmake/Modules/LLVMVersion.cmake" ]; then
+    LLVM_VERSION_FILES+=("$LLVM_DIR/cmake/Modules/LLVMVersion.cmake")
+fi
+
+LLVM_VERSION_MAJOR=$(grep -hE '^[[:space:]]*set\(LLVM_VERSION_MAJOR[[:space:]]+[0-9]+\)' \
+    "${LLVM_VERSION_FILES[@]}" 2>/dev/null \
+    | grep -oE '[0-9]+' | head -n 1)
+if [ -z "$LLVM_VERSION_MAJOR" ]; then
+    echo "error: could not detect LLVM_VERSION_MAJOR from $LLVM_DIR" >&2
+    exit 1
+fi
+
+HOST_TARGETS=(llvm-tblgen)
+if [ "$LLVM_VERSION_MAJOR" -ge 17 ]; then
+    HOST_TARGETS+=(llvm-min-tblgen)
+fi
+
+echo "=== Stage 1: building native llvm-tblgen (LLVM $LLVM_VERSION_MAJOR) at $HOST_BUILD_DIR ==="
 cmake -GNinja \
     -S "$LLVM_DIR/llvm" \
     -B "$HOST_BUILD_DIR" \
@@ -47,10 +72,9 @@ cmake -GNinja \
     -DLLVM_CCACHE_BUILD=ON \
     -DLLVM_CCACHE_MAXSIZE=5G
 
-cmake --build "$HOST_BUILD_DIR" -j "$(nproc)" --target llvm-tblgen llvm-min-tblgen
+cmake --build "$HOST_BUILD_DIR" -j "$(nproc)" --target "${HOST_TARGETS[@]}"
 
 HOST_TBLGEN_ABS=$(realpath "$HOST_TBLGEN")
-HOST_MIN_TBLGEN_ABS=$(realpath "$HOST_MIN_TBLGEN")
 DRIVER_DIR_ABS=$(realpath "$DRIVER_DIR")
 
 echo "=== Stage 2: emscripten LLVM build at $WASM_BUILD_DIR ==="
