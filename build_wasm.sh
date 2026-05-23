@@ -70,7 +70,7 @@ cmake -GNinja \
     -DLLVM_INCLUDE_EXAMPLES=OFF \
     -DLLVM_ENABLE_PROJECTS="" \
     -DLLVM_CCACHE_BUILD=ON \
-    -DLLVM_CCACHE_MAXSIZE=5G
+    -DLLVM_CCACHE_MAXSIZE=1G
 
 cmake --build "$HOST_BUILD_DIR" -j "$(nproc)" --target "${HOST_TARGETS[@]}"
 
@@ -101,7 +101,7 @@ emcmake cmake -GNinja \
     -DLLVM_EXTERNAL_PROJECTS=instcombine_driver \
     -DLLVM_EXTERNAL_INSTCOMBINE_DRIVER_SOURCE_DIR="$DRIVER_DIR_ABS" \
     -DLLVM_CCACHE_BUILD=ON \
-    -DLLVM_CCACHE_MAXSIZE=5G
+    -DLLVM_CCACHE_MAXSIZE=1G
 
 cmake --build "$WASM_BUILD_DIR" -j "$(nproc)" --target instcombine_driver
 
