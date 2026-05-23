@@ -497,10 +497,14 @@ def update_core_cmake(file_path: Path) -> None:
     content = file_path.read_text()
     if "fuzz_runtime.cpp" in content:
         return
-    new_content = content.replace(
-        "add_llvm_component_library(LLVMCore",
-        "add_llvm_component_library(LLVMCore\n  fuzz_runtime.cpp",
+    new_content, count = re.subn(
+        r"(add_llvm(?:_component)?_library\(LLVMCore\s*\n)",
+        r"\1  fuzz_runtime.cpp\n",
+        content,
+        count=1,
     )
+    if count != 1:
+        raise RuntimeError(f"Could not find LLVMCore library declaration in {file_path}")
     file_path.write_text(new_content)
 
 
