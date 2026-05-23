@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-05-23T22:25:56.110Z",
+  "generatedAt": "2026-05-23T22:29:16.874Z",
   "defaultTag": "llvmorg-22.1.6",
   "releases": [
     {
@@ -194,11 +194,22 @@
       "name": "llvmorg-10.0.1",
       "slug": "llvmorg-10.0.1",
       "kind": "tag",
-      "publishedAt": "2026-05-23T22:25:56.060Z",
+      "publishedAt": "2026-05-23T22:25:56Z",
       "prerelease": false,
       "bundled": false,
       "jsAsset": "https://raw.githubusercontent.com/xuhongxu96/instcombine-instrumentor/wasm-pkgs/llvmorg-10.0.1/instcombine_driver.js",
       "wasmAsset": "https://raw.githubusercontent.com/xuhongxu96/instcombine-instrumentor/wasm-pkgs/llvmorg-10.0.1/instcombine_driver.wasm"
+    },
+    {
+      "tag": "llvmorg-9.0.1",
+      "name": "llvmorg-9.0.1",
+      "slug": "llvmorg-9.0.1",
+      "kind": "tag",
+      "publishedAt": "2026-05-23T22:29:16.742Z",
+      "prerelease": false,
+      "bundled": false,
+      "jsAsset": "https://raw.githubusercontent.com/xuhongxu96/instcombine-instrumentor/wasm-pkgs/llvmorg-9.0.1/instcombine_driver.js",
+      "wasmAsset": "https://raw.githubusercontent.com/xuhongxu96/instcombine-instrumentor/wasm-pkgs/llvmorg-9.0.1/instcombine_driver.wasm"
     },
     {
       "tag": "main-260523-4f828412ee18",
