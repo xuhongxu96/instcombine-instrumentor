@@ -47,7 +47,7 @@ export function parseGitHubSourceUrl(input) {
     const ref = decodeURIComponent(path.slice(commitIdx + COMMIT_PREFIX.length));
     const parts = repoPath.split("/");
     if (parts.length !== 2 || !ref) {
-      throw new Error("expected https://github.com/<owner>/<repo>/commit/<sha>");
+      throw new Error("expected https://github.com/<owner>/<repo>/commit/<branch-or-sha>");
     }
     const [owner, repo] = parts;
     return {
@@ -55,12 +55,12 @@ export function parseGitHubSourceUrl(input) {
       repo,
       sourceRepoUrl: `https://github.com/${owner}/${repo}`,
       llvmRemote: `https://github.com/${owner}/${repo}.git`,
-      sourceKind: "commit",
+      sourceKind: HEX_RE.test(ref) ? "commit" : "branch",
       sourceRef: ref,
     };
   }
 
-  throw new Error("unsupported GitHub URL; expected /tree/<branch-or-sha> or /commit/<sha>");
+  throw new Error("unsupported GitHub URL; expected /tree/<branch-or-sha> or /commit/<branch-or-sha>");
 }
 
 export function artifactBranchName(owner, repo) {

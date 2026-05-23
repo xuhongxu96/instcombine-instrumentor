@@ -8,33 +8,33 @@ import {
   sanitizeBranchComponent,
 } from "./resolve_custom_source_lib.mjs";
 
-test("parses branch tree URLs", () => {
-  const parsed = parseGitHubSourceUrl("https://github.com/xhx/fork-llvm/tree/xhx/fix-173706");
-  assert.deepEqual(parsed, {
-    owner: "xhx",
-    repo: "fork-llvm",
-    sourceRepoUrl: "https://github.com/xhx/fork-llvm",
-    llvmRemote: "https://github.com/xhx/fork-llvm.git",
-    sourceKind: "branch",
-    sourceRef: "xhx/fix-173706",
+for (const prefix of ["tree", "commit"]) {
+  test(`parses branch ${prefix} URLs`, () => {
+    const parsed = parseGitHubSourceUrl(`https://github.com/xhx/fork-llvm/${prefix}/xhx/fix-173706`);
+    assert.deepEqual(parsed, {
+      owner: "xhx",
+      repo: "fork-llvm",
+      sourceRepoUrl: "https://github.com/xhx/fork-llvm",
+      llvmRemote: "https://github.com/xhx/fork-llvm.git",
+      sourceKind: "branch",
+      sourceRef: "xhx/fix-173706",
+    });
   });
-});
 
-test("treats tree hex refs as commits", () => {
-  const parsed = parseGitHubSourceUrl(
-    "https://github.com/xuhongxu96/llvm-project/tree/cdb098e3391952879e187b5f62e79bff29a49f3f",
-  );
-  assert.equal(parsed.sourceKind, "commit");
-  assert.equal(parsed.sourceRef, "cdb098e3391952879e187b5f62e79bff29a49f3f");
-});
-
-test("parses commit URLs", () => {
-  const parsed = parseGitHubSourceUrl(
-    "https://github.com/xuhongxu96/llvm-project/commit/cdb098e3391952879e187b5f62e79bff29a49f3f",
-  );
-  assert.equal(parsed.sourceKind, "commit");
-  assert.equal(parsed.sourceRef, "cdb098e3391952879e187b5f62e79bff29a49f3f");
-});
+  test(`treats ${prefix} hex refs as commits`, () => {
+    const parsed = parseGitHubSourceUrl(
+      `https://github.com/xuhongxu96/llvm-project/${prefix}/cdb098e3391952879e187b5f62e79bff29a49f3f`,
+    );
+    assert.deepEqual(parsed, {
+      owner: "xuhongxu96",
+      repo: "llvm-project",
+      sourceRepoUrl: "https://github.com/xuhongxu96/llvm-project",
+      llvmRemote: "https://github.com/xuhongxu96/llvm-project.git",
+      sourceKind: "commit",
+      sourceRef: "cdb098e3391952879e187b5f62e79bff29a49f3f",
+    });
+  });
+}
 
 test("rejects unsupported hosts and paths", () => {
   assert.throws(
