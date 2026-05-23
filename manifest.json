@@ -1,5 +1,19 @@
 {
-  "generatedAt": "2026-05-23T17:24:25Z",
-  "defaultTag": null,
-  "releases": []
+  "generatedAt": "2026-05-23T17:24:27.610Z",
+  "defaultTag": "branch-xhx-fix-173706-7f7069c26796",
+  "releases": [
+    {
+      "tag": "branch-xhx-fix-173706-7f7069c26796",
+      "name": "branch-xhx-fix-173706-7f7069c26796",
+      "slug": "branch-xhx-fix-173706-7f7069c26796",
+      "kind": "tag",
+      "publishedAt": "2026-05-23T17:24:27.547Z",
+      "prerelease": false,
+      "bundled": false,
+      "jsAsset": "https://raw.githubusercontent.com/xuhongxu96/instcombine-instrumentor/wasm-artifacts-xuhongxu96-llvm-project/branch-xhx-fix-173706-7f7069c26796/instcombine_driver.js",
+      "wasmAsset": "https://raw.githubusercontent.com/xuhongxu96/instcombine-instrumentor/wasm-artifacts-xuhongxu96-llvm-project/branch-xhx-fix-173706-7f7069c26796/instcombine_driver.wasm",
+      "sourceRepoUrl": "https://github.com/xuhongxu96/llvm-project",
+      "sourceRef": "xhx/fix-173706"
+    }
+  ]
 }
