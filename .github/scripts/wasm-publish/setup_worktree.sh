@@ -38,7 +38,7 @@ else
         # Defensive: anything stray (e.g. untracked from main) shouldn't be
         # carried in.
         find . -mindepth 1 -maxdepth 1 ! -name '.git' -exec rm -rf {} +
-        cat > README.md <<'EOF'
+        cat > README.md <<EOF
 # $TARGET_BRANCH
 
 This branch is bot-managed by the wasm publish workflows. Do not edit by hand

@@ -22,6 +22,8 @@ define i32 @f(i32 %x) {
 const DEFAULT_ARTIFACT_BRANCH = "wasm-pkgs";
 const VERSION_STORAGE_PREFIX = "wasmVersion:";
 const BRANCH_STORAGE_KEY = "wasmArtifactBranch";
+const SHARE_PARAM_IR = "ir";
+const SHARE_PARAM_TAG = "tag";
 
 type WasmState =
   | { kind: "loadingManifest" }
@@ -60,6 +62,30 @@ function getInitialArtifactBranch(): string {
   if (fromUrl) return fromUrl;
   const stored = typeof localStorage !== "undefined" ? localStorage.getItem(BRANCH_STORAGE_KEY) : null;
   return stored || DEFAULT_ARTIFACT_BRANCH;
+}
+
+function decodeBase64Url(value: string): string | null {
+  try {
+    const padded = value.replace(/-/g, "+").replace(/_/g, "/");
+    const base64 = padded + "=".repeat((4 - (padded.length % 4)) % 4);
+    const bytes = Uint8Array.from(atob(base64), (c) => c.charCodeAt(0));
+    return new TextDecoder().decode(bytes);
+  } catch {
+    return null;
+  }
+}
+
+function encodeBase64Url(value: string): string {
+  const bytes = new TextEncoder().encode(value);
+  let binary = "";
+  for (const byte of bytes) binary += String.fromCharCode(byte);
+  return btoa(binary).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/g, "");
+}
+
+function getInitialIr(): string {
+  const encoded = new URLSearchParams(window.location.search).get(SHARE_PARAM_IR);
+  if (!encoded) return DEFAULT_IR;
+  return decodeBase64Url(encoded) ?? DEFAULT_IR;
 }
 
 function versionStorageKey(branch: string): string {
@@ -101,6 +127,8 @@ function fallbackManifest(): WasmManifest {
 
 function pickInitialTag(manifest: WasmManifest, branch: string): string | null {
   if (manifest.releases.length === 0) return null;
+  const fromUrl = new URLSearchParams(window.location.search).get(SHARE_PARAM_TAG);
+  if (fromUrl && manifest.releases.some((r) => r.tag === fromUrl)) return fromUrl;
   const stored = typeof localStorage !== "undefined" ? localStorage.getItem(versionStorageKey(branch)) : null;
   if (stored && manifest.releases.some((r) => r.tag === stored)) return stored;
   if (manifest.defaultTag && manifest.releases.some((r) => r.tag === manifest.defaultTag)) {
@@ -116,7 +144,7 @@ function formatLabel(r: WasmRelease): string {
 }
 
 export function App() {
-  const [ir, setIr] = useState(DEFAULT_IR);
+  const [ir, setIr] = useState(() => getInitialIr());
   const [trace, setTrace] = useState("");
   const [traceJson, setTraceJson] = useState("");
   const [outputIr, setOutputIr] = useState("");
@@ -128,6 +156,7 @@ export function App() {
   const [selectedTag, setSelectedTag] = useState<string | null>(null);
   const [state, setState] = useState<WasmState>({ kind: "loadingManifest" });
   const [wordWrap, setWordWrap] = useState(true);
+  const [shareCopied, setShareCopied] = useState(false);
   const { pref: colorPref, setPref: setColorPref } = useColorScheme();
   const workerRef = useRef<Worker | null>(null);
   const workerReadyRef = useRef(false);
@@ -347,6 +376,21 @@ export function App() {
     }
   })();
 
+  const onShare = useCallback(async () => {
+    const url = new URL(window.location.href);
+    url.searchParams.set("branch", artifactBranch);
+    if (selectedTag) url.searchParams.set(SHARE_PARAM_TAG, selectedTag);
+    else url.searchParams.delete(SHARE_PARAM_TAG);
+    url.searchParams.set(SHARE_PARAM_IR, encodeBase64Url(ir));
+    try {
+      await navigator.clipboard.writeText(url.toString());
+      setShareCopied(true);
+      window.setTimeout(() => setShareCopied(false), 1500);
+    } catch {
+      // clipboard may be blocked in some contexts; ignore silently
+    }
+  }, [artifactBranch, selectedTag, ir]);
+
   return (
     <div className="app">
       <header className="toolbar">
@@ -384,6 +428,7 @@ export function App() {
           branch
           <input
             type="text"
+            placeholder={`leave empty for ${DEFAULT_ARTIFACT_BRANCH}`}
             value={artifactBranchInput}
             onChange={(e) => setArtifactBranchInput(e.target.value)}
             onBlur={commitArtifactBranch}
@@ -398,6 +443,9 @@ export function App() {
           />
         </label>
         <button onClick={onRun} disabled={runDisabled}>Run</button>
+        <button onClick={onShare} title="Copy permalink to current settings and IR">
+          {shareCopied ? "link copied" : "Share"}
+        </button>
         <span className="status">{statusText}</span>
         <label className="theme-picker">
           theme
@@ -418,7 +466,10 @@ export function App() {
             <PanelGroup direction="vertical" autoSaveId="instcombine-left-v">
               <Panel defaultSize={60} minSize={20}>
                 <section className="pane">
-                  <div className="pane-header">LLVM IR</div>
+                  <div className="pane-header">
+                    <span>LLVM IR</span>
+                    <CopyButton text={ir} />
+                  </div>
                   <div className="pane-body">
                     <Editor value={ir} onChange={setIr} />
                   </div>
@@ -443,6 +494,7 @@ export function App() {
             <section className="pane">
               <div className="pane-header">
                 <span>{viewMode === "structured" ? "Structured Trace" : "Plain-Text Trace"}</span>
+                {viewMode === "text" && <CopyButton text={trace} />}
                 {viewMode === "text" && (
                   <button
                     type="button"
