@@ -154,14 +154,14 @@ def patch_signals_header_for_older_llvm(llvm_repo: Path, llvm_version_major: int
     signals_h = llvm_repo / "llvm/include/llvm/Support/Signals.h"
     print(f"Patching {signals_h} for LLVM {llvm_version_major}...")
     content = signals_h.read_text()
-    if "#include <stdint>" in content:
+    if "#include <cstdint>" in content:
         return
 
     include_anchor = "#include <string>"
     if include_anchor not in content:
         raise RuntimeError(f"Could not find include anchor in {signals_h}")
 
-    signals_h.write_text(content.replace(include_anchor, '#include <stdint>\n' + include_anchor, 1))
+    signals_h.write_text(content.replace(include_anchor, '#include <cstdint>\n' + include_anchor, 1))
 
 
 def _is_pointer_return(prefix_text: bytes, declarator: Node, allow_star_in_prefix: bool) -> bool:

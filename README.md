@@ -1,27 +1,27 @@
 # instcombine-instrumentor
 
+**Try it:** <https://xuhongxu.com/instcombine-instrumentor/>
+
+![demo](demo.png)
+
 Build an instrumented LLVM `opt` that records every new instruction and every
 RAUW replacement performed by InstCombine / InstructionSimplify on each pass
-iteration. Useful for fuzzing and differential analysis of InstCombine folds.
+iteration.
 
 Ships in two flavors:
 
-- **Native `opt`** — patched LLVM build, traces to `llvm_fuzz_info.txt`
-  (human-readable) plus `llvm_fuzz_info.json` (JSON Lines sidecar, one
-  object per pass iteration; carries opcode, parent IR function/BB, the
-  InstCombine rule that fired, and structured stack frames).
-- **In-browser webapp** — Vite + React + Monaco SPA running a minimal
-  WebAssembly InstCombine on user-pasted IR. Three resizable panes (input
-  IR / post-pass `output.ll` / trace) with a Text ↔ Structured toggle on
-  the trace pane — the structured view groups records by iteration, adds
-  opcode/rule/function pills, and lets you click `0x…` pointers to jump
-  between value records.
-  **Live:** <https://xuhongxu.com/instcombine-instrumentor/>
+- **Native `opt`**<br>
+  patched LLVM build, traces to `llvm_fuzz_info.txt`
+  (human-readable) plus `llvm_fuzz_info.json` (JSON Lines sidecar).
+- **In-browser webapp**<br>
+  Vite + React + Monaco SPA running a minimal
+  WebAssembly InstCombine on user-pasted IR. <br>
+
+> The trace file names include "fuzz" because the original motivation was to use this as a method of generating coverage-guided fuzzing traces for LLVM IR transformations, but the tool is general-purpose and can be used for manual inspection as well.
 
 ## Quickstart (native `opt`)
 
-Deps managed by [uv](https://github.com/astral-sh/uv) (`curl -LsSf
-https://astral.sh/uv/install.sh | sh`).
+Deps managed by [uv](https://github.com/astral-sh/uv).
 
 ```bash
 uv sync
@@ -33,6 +33,7 @@ bash smoke_test.sh     # builds a tiny IR through opt and checks the trace
 
 The patched binary writes `./llvm_fuzz_info.txt` (text) and
 `./llvm_fuzz_info.json` (JSONL sidecar) into the current working directory.
+
 Set `DISABLE_INSTCOMBINE_TRACE=1` at runtime to suppress instrumentation
 entirely.
 
@@ -58,8 +59,7 @@ cd web && npm install && npm run dev
 ## Bumping the LLVM version
 
 Edit `llvm_commit.txt`, then re-run the patcher and whichever build you care
-about. `patch_llvm.py` is idempotent — running it twice on the same checkout
-is a no-op.
+about.
 
 ```bash
 bash clone_llvm.sh
@@ -91,6 +91,13 @@ CI / native releases are split into independent paths: native `opt-llvm-*.tar.xz
 tarballs still attach to GitHub Releases via `release/<llvm-tag>` (created by
 `native-release-auto.yml` / `native-release-manual.yml`); the wasm flow is
 entirely separate.
+
+### Custom builds
+
+Use `.github/workflows/wasm-custom-publish.yml` to build a custom ref in a fork of llvm and publish it to the custom branch.
+
+The webapp supports specifying a custom branch
+to load the manifest.
 
 ## More
 
