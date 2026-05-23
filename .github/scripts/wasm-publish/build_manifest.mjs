@@ -16,22 +16,17 @@
 //     --owner <gh-owner> --repo <gh-repo> \
 //     [--branch wasm-pkgs] [--root .] [--out manifest.json]
 
-import { readdir, stat, writeFile } from "node:fs/promises";
+import { readFile, readdir, stat, writeFile } from "node:fs/promises";
 import { spawnSync } from "node:child_process";
 import path from "node:path";
 import process from "node:process";
-
-const args = parseArgs(process.argv.slice(2));
-const owner = required(args.owner, "--owner");
-const repo = required(args.repo, "--repo");
-const branch = args.branch ?? "wasm-pkgs";
-const root = path.resolve(args.root ?? ".");
-const outPath = path.resolve(args.out ?? path.join(root, "manifest.json"));
+import { pathToFileURL } from "node:url";
 
 const JS_NAME = "instcombine_driver.js";
 const WASM_NAME = "instcombine_driver.wasm";
 const TAG_RE = /^llvmorg-(\d+)\.(\d+)\.(\d+)(?:-rc(\d+))?$/;
 const COMMIT_RE = /^main-(\d{6})-([0-9a-fA-F]{12})$/;
+const METADATA_NAME = "metadata.json";
 
 function parseArgs(argv) {
   const out = {};
@@ -62,16 +57,31 @@ function required(value, name) {
   return value;
 }
 
-function rawUrl(dir, file) {
-  return `https://raw.githubusercontent.com/${owner}/${repo}/${branch}/${dir}/${file}`;
+async function readMetadata(dirPath) {
+  try {
+    const text = await readFile(path.join(dirPath, METADATA_NAME), "utf8");
+    const parsed = JSON.parse(text);
+    if (
+      typeof parsed?.sourceRepoUrl !== "string" ||
+      typeof parsed?.sourceRef !== "string" ||
+      typeof parsed?.resolvedSha !== "string" ||
+      (parsed?.sourceKind !== "branch" && parsed?.sourceKind !== "commit")
+    ) {
+      throw new Error("metadata.json missing required fields");
+    }
+    return parsed;
+  } catch (err) {
+    if (err?.code === "ENOENT") return null;
+    throw err;
+  }
 }
 
 // First commit that touched the directory — best-effort timestamp for the
 // release entry. Falls back to "now" if git isn't available or the dir isn't
 // tracked yet (e.g. brand-new build that hasn't been committed yet).
-function dirAddedAt(dir) {
+function dirAddedAt(rootPath, dir) {
   const res = spawnSync("git", [
-    "-C", root,
+    "-C", rootPath,
     "log", "--diff-filter=A", "--format=%aI", "--", `${dir}/`,
   ], { encoding: "utf8" });
   if (res.status !== 0) return null;
@@ -107,6 +117,9 @@ function classify(name) {
 // Tag entries: newest-first by semver (stable beats its own rc).
 function compareTagDesc(a, b) {
   const ka = a._sortKey, kb = b._sortKey;
+  if (!ka || !kb) {
+    return new Date(b.publishedAt).getTime() - new Date(a.publishedAt).getTime();
+  }
   if (ka.major !== kb.major) return kb.major - ka.major;
   if (ka.minor !== kb.minor) return kb.minor - ka.minor;
   if (ka.patch !== kb.patch) return kb.patch - ka.patch;
@@ -125,8 +138,16 @@ function compareCommitDesc(a, b) {
   return 0;
 }
 
-async function main() {
-  const entries = await readdir(root, { withFileTypes: true });
+export async function buildManifest({
+  owner,
+  repo,
+  branch = "wasm-pkgs",
+  root = ".",
+  out,
+}) {
+  const resolvedRoot = path.resolve(root);
+  const resolvedOut = path.resolve(out ?? path.join(resolvedRoot, "manifest.json"));
+  const entries = await readdir(resolvedRoot, { withFileTypes: true });
   const tagReleases = [];
   const commitReleases = [];
 
@@ -134,8 +155,7 @@ async function main() {
     if (!ent.isDirectory()) continue;
     if (ent.name.startsWith(".")) continue;
     const meta = classify(ent.name);
-    if (!meta) continue;
-    const dirPath = path.join(root, ent.name);
+    const dirPath = path.join(resolvedRoot, ent.name);
     try {
       await stat(path.join(dirPath, JS_NAME));
       await stat(path.join(dirPath, WASM_NAME));
@@ -143,20 +163,36 @@ async function main() {
       console.log(`skip ${ent.name}: missing ${JS_NAME} or ${WASM_NAME}`);
       continue;
     }
-    const publishedAt = dirAddedAt(ent.name) ?? new Date().toISOString();
+    const publishedAt = dirAddedAt(resolvedRoot, ent.name) ?? new Date().toISOString();
+    const metadata = await readMetadata(dirPath);
+    const releaseKind =
+      metadata?.sourceKind === "commit" ? "commit" :
+      meta?.kind ?? (metadata?.sourceKind === "branch" ? "tag" : null);
+    if (!releaseKind) {
+      console.log(`skip ${ent.name}: unrecognized directory shape and no metadata.json`);
+      continue;
+    }
+    const sortKey =
+      releaseKind === "tag"
+        ? (meta?.kind === "tag" ? meta.sortKey : null)
+        : (meta?.kind === "commit" ? meta.sortKey : { yymmdd: publishedAt.slice(2, 10).replace(/-/g, ""), sha: ent.name });
     const release = {
       tag: ent.name,
       name: ent.name,
       slug: ent.name,
-      kind: meta.kind,
+      kind: releaseKind,
       publishedAt,
-      prerelease: meta.prerelease,
+      prerelease: meta?.prerelease ?? false,
       bundled: false,
-      jsAsset: rawUrl(ent.name, JS_NAME),
-      wasmAsset: rawUrl(ent.name, WASM_NAME),
-      _sortKey: meta.sortKey,
+      jsAsset: `https://raw.githubusercontent.com/${owner}/${repo}/${branch}/${ent.name}/${JS_NAME}`,
+      wasmAsset: `https://raw.githubusercontent.com/${owner}/${repo}/${branch}/${ent.name}/${WASM_NAME}`,
+      ...(metadata ? {
+        sourceRepoUrl: metadata.sourceRepoUrl,
+        sourceRef: metadata.sourceRef,
+      } : {}),
+      _sortKey: sortKey,
     };
-    if (meta.kind === "tag") tagReleases.push(release);
+    if (releaseKind === "tag") tagReleases.push(release);
     else commitReleases.push(release);
   }
 
@@ -180,13 +216,32 @@ async function main() {
     releases,
   };
 
-  await writeFile(outPath, JSON.stringify(manifest, null, 2) + "\n");
-  console.log(`wrote ${outPath}`);
+  await writeFile(resolvedOut, JSON.stringify(manifest, null, 2) + "\n");
+  console.log(`wrote ${resolvedOut}`);
   console.log(`  ${tagReleases.length} tag release(s), ${commitReleases.length} commit snapshot(s)`);
   console.log(`  defaultTag = ${defaultTag ?? "(none)"}`);
+  return manifest;
 }
 
-main().catch((err) => {
-  console.error(err.stack ?? err.message ?? String(err));
-  process.exit(1);
-});
+async function main() {
+  const args = parseArgs(process.argv.slice(2));
+  const owner = required(args.owner, "--owner");
+  const repo = required(args.repo, "--repo");
+  const branch = args.branch ?? "wasm-pkgs";
+  const root = path.resolve(args.root ?? ".");
+  const outPath = path.resolve(args.out ?? path.join(root, "manifest.json"));
+  await buildManifest({
+    owner,
+    repo,
+    branch,
+    root,
+    out: outPath,
+  });
+}
+
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  main().catch((err) => {
+    console.error(err.stack ?? err.message ?? String(err));
+    process.exit(1);
+  });
+}

@@ -19,6 +19,8 @@ export interface WasmRelease {
   publishedAt: string;
   prerelease: boolean;
   bundled: boolean;
+  sourceRepoUrl?: string;
+  sourceRef?: string;
   // For bundled entries: path fragment relative to `${BASE_URL}wasm/`, e.g.
   //   "release_llvmorg-22.1.6/instcombine_driver.js".
   // For remote entries: absolute https URL of the GitHub Release asset.

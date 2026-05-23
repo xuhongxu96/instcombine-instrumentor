@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# Finalize a wasm-publish.yml run after all per-ref builds have staged their
+# Finalize a wasm publish run after all per-ref builds have staged their
 # outputs:
-#   1. Copy the staged outputs into the wasm-pkgs worktree.
+#   1. Copy the staged outputs into the target branch worktree.
 #   2. Prune older main-* snapshots (daily-main only) so the branch doesn't
 #      grow unbounded.
 #   3. Regenerate manifest.json from the directory listing.
@@ -16,8 +16,9 @@
 #                   for the commit subject)
 #   GH_OWNER      — github.repository_owner — passed to manifest builder
 #   GH_REPO       — github.event.repository.name — passed to manifest builder
-#   STAGING_DIR   — directory containing <dirname>/{js,wasm} outputs
-#   WASM_PKGS_DIR — wasm-pkgs worktree path (default ./wasm-pkgs-branch)
+#   STAGING_DIR   — directory containing <dirname>/{js,wasm,metadata.json} outputs
+#   TARGET_BRANCH — branch to commit/push (default wasm-pkgs)
+#   WORKTREE_PATH — target branch worktree path (default ./wasm-pkgs-branch)
 
 set -euo pipefail
 
@@ -28,12 +29,13 @@ set -euo pipefail
 : "${GH_OWNER:?GH_OWNER required}"
 : "${GH_REPO:?GH_REPO required}"
 STAGING_DIR=${STAGING_DIR:-./wasm-publish-staging}
-WASM_PKGS_DIR=${WASM_PKGS_DIR:-./wasm-pkgs-branch}
+TARGET_BRANCH=${TARGET_BRANCH:-wasm-pkgs}
+WORKTREE_PATH=${WORKTREE_PATH:-./wasm-pkgs-branch}
 
 if [ -d "$STAGING_DIR" ]; then
     find "$STAGING_DIR" -mindepth 1 -maxdepth 1 -type d -print0 \
         | while IFS= read -r -d '' SRC; do
-            DEST="$WASM_PKGS_DIR/$(basename "$SRC")"
+            DEST="$WORKTREE_PATH/$(basename "$SRC")"
             rm -rf "$DEST"
             mkdir -p "$DEST"
             cp -R "$SRC"/. "$DEST"/
@@ -41,7 +43,7 @@ if [ -d "$STAGING_DIR" ]; then
 fi
 
 if [ "$MODE" = "daily-main" ]; then
-    pushd "$WASM_PKGS_DIR" >/dev/null
+    pushd "$WORKTREE_PATH" >/dev/null
     # Newest first by directory name (lex sort works because format is
     # main-YYMMDD-...); drop everything beyond PRUNE_MAIN.
     mapfile -t SNAPS < <(find . -mindepth 1 -maxdepth 1 -type d -name 'main-*' -printf '%f\n' | sort -r)
@@ -57,19 +59,22 @@ fi
 node .github/scripts/wasm-publish/build_manifest.mjs \
     --owner "$GH_OWNER" \
     --repo "$GH_REPO" \
-    --root "$WASM_PKGS_DIR"
+    --branch "$TARGET_BRANCH" \
+    --root "$WORKTREE_PATH"
 
 if [ "$DRY_RUN" = "true" ]; then
     echo "dry-run: would commit and push the changes below"
-    git -C "$WASM_PKGS_DIR" status --short
+    echo "target_branch=$TARGET_BRANCH"
+    echo "publish_dirs=$(cut -f1 "$REFS_FILE" | paste -sd, -)"
+    git -C "$WORKTREE_PATH" status --short
     exit 0
 fi
 
-git -C "$WASM_PKGS_DIR" add -A
-if git -C "$WASM_PKGS_DIR" diff --cached --quiet; then
+git -C "$WORKTREE_PATH" add -A
+if git -C "$WORKTREE_PATH" diff --cached --quiet; then
     echo "Nothing to commit — manifest already matches."
     exit 0
 fi
 REFS=$(cut -f1 "$REFS_FILE" | paste -sd, -)
-git -C "$WASM_PKGS_DIR" commit -m "publish: $REFS"
-git -C "$WASM_PKGS_DIR" push origin wasm-pkgs
+git -C "$WORKTREE_PATH" commit -m "publish: $REFS"
+git -C "$WORKTREE_PATH" push origin "$TARGET_BRANCH"

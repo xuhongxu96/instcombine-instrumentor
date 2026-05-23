@@ -5,7 +5,7 @@ import { CopyButton, OutputIrPane } from "./components/OutputIrPane";
 import { TracePanel, type TraceViewMode } from "./components/TracePanel";
 import { useColorScheme, type ColorSchemePref } from "./components/useColorScheme";
 import { parseTraceJsonl } from "./trace/parse";
-import { llvmRefFromManifestTag } from "./trace/githubLink";
+import { githubSourceFromRelease } from "./trace/githubLink";
 import {
   releaseToSource,
   type WasmManifest,
@@ -19,7 +19,9 @@ define i32 @f(i32 %x) {
 }
 `;
 
-const STORAGE_KEY = "wasmVersion";
+const DEFAULT_ARTIFACT_BRANCH = "wasm-pkgs";
+const VERSION_STORAGE_PREFIX = "wasmVersion:";
+const BRANCH_STORAGE_KEY = "wasmArtifactBranch";
 
 type WasmState =
   | { kind: "loadingManifest" }
@@ -37,10 +39,39 @@ function getBaseUrl(): string {
   return base.endsWith("/") ? base : base + "/";
 }
 
-function getRemoteManifestUrl(): string | null {
-  const url = (import.meta as ImportMeta & { env?: { VITE_REMOTE_MANIFEST_URL?: string } })
-    .env?.VITE_REMOTE_MANIFEST_URL;
-  return url && url.length > 0 ? url : null;
+function getRepositoryFullName(): string | null {
+  const env = (import.meta as ImportMeta & {
+    env?: { VITE_GITHUB_REPOSITORY?: string; VITE_REMOTE_MANIFEST_URL?: string };
+  }).env;
+  if (env?.VITE_GITHUB_REPOSITORY) return env.VITE_GITHUB_REPOSITORY;
+  const remote = env?.VITE_REMOTE_MANIFEST_URL;
+  if (!remote) return null;
+  const match = remote.match(/^https:\/\/raw\.githubusercontent\.com\/([^/]+\/[^/]+)\/[^/]+\/manifest\.json$/);
+  return match?.[1] ?? null;
+}
+
+function getRemoteManifestUrl(branch: string): string | null {
+  const repo = getRepositoryFullName();
+  return repo ? `https://raw.githubusercontent.com/${repo}/${encodeURIComponent(branch)}/manifest.json` : null;
+}
+
+function getInitialArtifactBranch(): string {
+  const fromUrl = new URLSearchParams(window.location.search).get("branch");
+  if (fromUrl) return fromUrl;
+  const stored = typeof localStorage !== "undefined" ? localStorage.getItem(BRANCH_STORAGE_KEY) : null;
+  return stored || DEFAULT_ARTIFACT_BRANCH;
+}
+
+function versionStorageKey(branch: string): string {
+  return `${VERSION_STORAGE_PREFIX}${branch}`;
+}
+
+function persistArtifactBranch(branch: string) {
+  try { localStorage.setItem(BRANCH_STORAGE_KEY, branch); } catch { /* private mode */ }
+  const url = new URL(window.location.href);
+  if (branch === DEFAULT_ARTIFACT_BRANCH) url.searchParams.delete("branch");
+  else url.searchParams.set("branch", branch);
+  window.history.replaceState({}, "", url);
 }
 
 async function fetchManifest(url: string): Promise<WasmManifest> {
@@ -68,9 +99,9 @@ function fallbackManifest(): WasmManifest {
   return { generatedAt: now, defaultTag: entry.tag, releases: [entry] };
 }
 
-function pickInitialTag(manifest: WasmManifest): string | null {
+function pickInitialTag(manifest: WasmManifest, branch: string): string | null {
   if (manifest.releases.length === 0) return null;
-  const stored = typeof localStorage !== "undefined" ? localStorage.getItem(STORAGE_KEY) : null;
+  const stored = typeof localStorage !== "undefined" ? localStorage.getItem(versionStorageKey(branch)) : null;
   if (stored && manifest.releases.some((r) => r.tag === stored)) return stored;
   if (manifest.defaultTag && manifest.releases.some((r) => r.tag === manifest.defaultTag)) {
     return manifest.defaultTag;
@@ -91,6 +122,8 @@ export function App() {
   const [outputIr, setOutputIr] = useState("");
   const [runError, setRunError] = useState("");
   const [viewMode, setViewMode] = useState<TraceViewMode>("structured");
+  const [artifactBranch, setArtifactBranch] = useState(() => getInitialArtifactBranch());
+  const [artifactBranchInput, setArtifactBranchInput] = useState(() => getInitialArtifactBranch());
   const [manifest, setManifest] = useState<WasmManifest | null>(null);
   const [selectedTag, setSelectedTag] = useState<string | null>(null);
   const [state, setState] = useState<WasmState>({ kind: "loadingManifest" });
@@ -102,7 +135,6 @@ export function App() {
   const lastLoadRequestRef = useRef<string | null>(null);
 
   const iterations = useMemo(() => parseTraceJsonl(traceJson), [traceJson]);
-  const llvmRef = useMemo(() => llvmRefFromManifestTag(selectedTag), [selectedTag]);
 
   const releaseByTag = useMemo(() => {
     const map = new Map<string, WasmRelease>();
@@ -123,6 +155,14 @@ export function App() {
     }
     return { tags, commits };
   }, [manifest]);
+  const selectedRelease = useMemo(
+    () => (selectedTag ? releaseByTag.get(selectedTag) ?? null : null),
+    [releaseByTag, selectedTag],
+  );
+  const githubSource = useMemo(
+    () => githubSourceFromRelease(selectedRelease),
+    [selectedRelease],
+  );
 
   const requestLoad = useCallback((tag: string) => {
     if (lastLoadRequestRef.current === tag) return;
@@ -139,18 +179,21 @@ export function App() {
     worker.postMessage({ type: "loadVersion", id: tag, source });
   }, [releaseByTag]);
 
-  // Fetch the manifest once on mount. Waterfall:
-  //   1. The remote `wasm-pkgs/manifest.json` if a URL is baked in via
-  //      VITE_REMOTE_MANIFEST_URL — preferred so new published builds appear
-  //      without a Pages redeploy.
+  // Fetch the manifest whenever the selected artifact branch changes.
+  // Waterfall:
+  //   1. The selected remote branch manifest on raw.githubusercontent.com.
   //   2. Same-origin `wasm/manifest.json` (the Pages-time builder emits this).
   //   3. fallbackManifest() — single entry pointing at whatever
   //      build_wasm.sh last dropped under public/wasm/.
   useEffect(() => {
     let cancelled = false;
     (async () => {
+      setManifest(null);
+      setSelectedTag(null);
+      setState({ kind: "loadingManifest" });
+      lastLoadRequestRef.current = null;
       let manifest: WasmManifest | null = null;
-      const remote = getRemoteManifestUrl();
+      const remote = getRemoteManifestUrl(artifactBranch);
       if (remote) {
         try {
           manifest = await fetchManifest(remote);
@@ -163,7 +206,7 @@ export function App() {
       }
       if (cancelled) return;
       const m = manifest ?? fallbackManifest();
-      const initial = pickInitialTag(m);
+      const initial = pickInitialTag(m, artifactBranch);
       setManifest(m);
       if (initial) {
         setSelectedTag(initial);
@@ -173,7 +216,7 @@ export function App() {
       }
     })();
     return () => { cancelled = true; };
-  }, []);
+  }, [artifactBranch]);
 
   // Spawn worker once.
   useEffect(() => {
@@ -259,9 +302,17 @@ export function App() {
     const tag = e.target.value;
     if (tag === selectedTag) return;
     setSelectedTag(tag);
-    try { localStorage.setItem(STORAGE_KEY, tag); } catch { /* private mode */ }
+    try { localStorage.setItem(versionStorageKey(artifactBranch), tag); } catch { /* private mode */ }
     requestLoad(tag);
-  }, [selectedTag, requestLoad]);
+  }, [artifactBranch, selectedTag, requestLoad]);
+
+  const commitArtifactBranch = useCallback(() => {
+    const next = artifactBranchInput.trim() || DEFAULT_ARTIFACT_BRANCH;
+    setArtifactBranchInput(next);
+    if (next === artifactBranch) return;
+    persistArtifactBranch(next);
+    setArtifactBranch(next);
+  }, [artifactBranch, artifactBranchInput]);
 
   const onRun = useCallback(() => {
     if (!workerRef.current) return;
@@ -328,6 +379,23 @@ export function App() {
               <option value="">(loading)</option>
             )}
           </select>
+        </label>
+        <label className="branch-picker">
+          branch
+          <input
+            type="text"
+            value={artifactBranchInput}
+            onChange={(e) => setArtifactBranchInput(e.target.value)}
+            onBlur={commitArtifactBranch}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") {
+                e.preventDefault();
+                commitArtifactBranch();
+              }
+            }}
+            disabled={state.kind === "running"}
+            spellCheck={false}
+          />
         </label>
         <button onClick={onRun} disabled={runDisabled}>Run</button>
         <span className="status">{statusText}</span>
@@ -408,7 +476,7 @@ export function App() {
                   wordWrap={wordWrap}
                   viewMode={viewMode}
                   iterations={iterations}
-                  llvmRef={llvmRef}
+                  githubSource={githubSource}
                 />
               </div>
             </section>

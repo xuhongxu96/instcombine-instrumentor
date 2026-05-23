@@ -86,6 +86,7 @@ jobs:
         working-directory: web
         env:
           VITE_REMOTE_MANIFEST_URL: ${{ env.REMOTE_MANIFEST_URL }}
+          VITE_GITHUB_REPOSITORY: ${{ github.repository }}
         run: npm run build
 
       - name: Upload Pages artifact

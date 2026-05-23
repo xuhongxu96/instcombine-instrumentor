@@ -3,6 +3,7 @@ import { useCallback } from "react";
 import { StructuredTraceView } from "./StructuredTraceView";
 import { useColorScheme } from "./useColorScheme";
 import type { Iteration } from "../trace/types";
+import type { GitHubSourceRef } from "../trace/githubLink";
 
 export type TraceViewMode = "text" | "structured";
 
@@ -11,7 +12,7 @@ interface TracePanelProps {
   wordWrap: boolean;
   viewMode: TraceViewMode;
   iterations: Iteration[];
-  llvmRef: string | null;
+  githubSource: GitHubSourceRef | null;
 }
 
 const PLACEHOLDER = "— click Run to capture a trace —";
@@ -100,7 +101,7 @@ function registerTraceLang(monaco: typeof import("monaco-editor")) {
   });
 }
 
-export function TracePanel({ trace, wordWrap, viewMode, iterations, llvmRef }: TracePanelProps) {
+export function TracePanel({ trace, wordWrap, viewMode, iterations, githubSource }: TracePanelProps) {
   const { scheme } = useColorScheme();
   const traceTheme = scheme === "dark" ? TRACE_THEME_DARK : TRACE_THEME_LIGHT;
   // Register the language + themes BEFORE the editor is instantiated. Monaco's
@@ -116,7 +117,7 @@ export function TracePanel({ trace, wordWrap, viewMode, iterations, llvmRef }: T
   }, []);
 
   if (viewMode === "structured") {
-    return <StructuredTraceView iterations={iterations} llvmRef={llvmRef} />;
+    return <StructuredTraceView iterations={iterations} githubSource={githubSource} />;
   }
 
   return (

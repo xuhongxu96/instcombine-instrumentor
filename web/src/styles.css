@@ -71,6 +71,7 @@ html, body, #root { height: 100%; margin: 0; }
 }
 .toolbar button:disabled { opacity: 0.6; cursor: wait; }
 .version-picker,
+.branch-picker,
 .theme-picker {
   display: inline-flex;
   align-items: center;
@@ -79,6 +80,7 @@ html, body, #root { height: 100%; margin: 0; }
   color: var(--muted);
 }
 .version-picker select,
+.branch-picker input,
 .theme-picker select {
   padding: 0.25rem 0.5rem;
   border: 1px solid var(--border);
@@ -89,8 +91,26 @@ html, body, #root { height: 100%; margin: 0; }
   color: inherit;
   cursor: pointer;
 }
+.branch-picker input {
+  min-width: 15rem;
+  cursor: text;
+}
 .version-picker select:disabled,
+.branch-picker input:disabled,
 .theme-picker select:disabled { opacity: 0.6; cursor: not-allowed; }
+
+@media (max-width: 1000px) {
+  .toolbar {
+    flex-wrap: wrap;
+  }
+  .toolbar .status {
+    margin-left: 0;
+    width: 100%;
+  }
+  .branch-picker input {
+    min-width: 11rem;
+  }
+}
 
 .panes {
   min-height: 0;
