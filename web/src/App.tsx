@@ -500,6 +500,15 @@ export function App() {
         <button onClick={onShare} title="Copy permalink to current settings and IR">
           {shareCopied ? "link copied" : "Share"}
         </button>
+        <a
+          className="manual-link"
+          href="https://xuhongxu.com/projects/instcombine-debugger/USER_MANUAL.html"
+          target="_blank"
+          rel="noopener noreferrer"
+          title="Open the user manual in a new tab"
+        >
+          manual
+        </a>
         <span className="status">{statusText}</span>
         <label className="theme-picker">
           theme

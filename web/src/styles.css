@@ -70,6 +70,12 @@ html, body, #root { height: 100%; margin: 0; }
   cursor: pointer;
 }
 .toolbar button:disabled { opacity: 0.6; cursor: wait; }
+.toolbar .manual-link {
+  font-size: 0.85rem;
+  color: var(--accent);
+  text-decoration: none;
+}
+.toolbar .manual-link:hover { text-decoration: underline; }
 .version-picker,
 .branch-picker,
 .theme-picker {
