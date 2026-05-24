@@ -212,6 +212,17 @@
       "wasmAsset": "https://raw.githubusercontent.com/xuhongxu96/instcombine-instrumentor/wasm-pkgs/llvmorg-9.0.1/instcombine_driver.wasm"
     },
     {
+      "tag": "llvmorg-8.0.1",
+      "name": "llvmorg-8.0.1",
+      "slug": "llvmorg-8.0.1",
+      "kind": "tag",
+      "publishedAt": "2026-05-23T23:42:00.000Z",
+      "prerelease": false,
+      "bundled": false,
+      "jsAsset": "https://raw.githubusercontent.com/xuhongxu96/instcombine-instrumentor/wasm-pkgs/llvmorg-8.0.1/instcombine_driver.js",
+      "wasmAsset": "https://raw.githubusercontent.com/xuhongxu96/instcombine-instrumentor/wasm-pkgs/llvmorg-8.0.1/instcombine_driver.wasm"
+    },
+    {
       "tag": "main-260523-4f828412ee18",
       "name": "main-260523-4f828412ee18",
       "slug": "main-260523-4f828412ee18",
