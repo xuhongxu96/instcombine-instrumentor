@@ -6,6 +6,7 @@ import { TracePanel, type TraceViewMode } from "./components/TracePanel";
 import { useColorScheme, type ColorSchemePref } from "./components/useColorScheme";
 import { parseTraceJsonl } from "./trace/parse";
 import { githubSourceFromRelease } from "./trace/githubLink";
+import { compressIr, decompressIr, isCompressionSupported } from "./share/irCompress";
 import {
   releaseToSource,
   type WasmManifest,
@@ -23,6 +24,7 @@ const DEFAULT_ARTIFACT_BRANCH = "wasm-pkgs";
 const VERSION_STORAGE_PREFIX = "wasmVersion:";
 const BRANCH_STORAGE_KEY = "wasmArtifactBranch";
 const SHARE_PARAM_IR = "ir";
+const SHARE_PARAM_IR_COMPRESSED = "irz";
 const SHARE_PARAM_TAG = "tag";
 
 type WasmState =
@@ -82,10 +84,23 @@ function encodeBase64Url(value: string): string {
   return btoa(binary).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/g, "");
 }
 
-function getInitialIr(): string {
-  const encoded = new URLSearchParams(window.location.search).get(SHARE_PARAM_IR);
-  if (!encoded) return DEFAULT_IR;
-  return decodeBase64Url(encoded) ?? DEFAULT_IR;
+interface InitialIr {
+  value: string;
+  isDecoding: boolean;
+  compressed: string | null;
+}
+
+function readInitialIr(): InitialIr {
+  const params = new URLSearchParams(window.location.search);
+  const compressed = params.get(SHARE_PARAM_IR_COMPRESSED);
+  if (compressed) {
+    return { value: "", isDecoding: true, compressed };
+  }
+  const legacy = params.get(SHARE_PARAM_IR);
+  if (legacy) {
+    return { value: decodeBase64Url(legacy) ?? DEFAULT_IR, isDecoding: false, compressed: null };
+  }
+  return { value: DEFAULT_IR, isDecoding: false, compressed: null };
 }
 
 function versionStorageKey(branch: string): string {
@@ -144,7 +159,10 @@ function formatLabel(r: WasmRelease): string {
 }
 
 export function App() {
-  const [ir, setIr] = useState(() => getInitialIr());
+  const initialIrRef = useRef<InitialIr | null>(null);
+  if (initialIrRef.current === null) initialIrRef.current = readInitialIr();
+  const [ir, setIr] = useState(initialIrRef.current.value);
+  const [isDecodingShared, setIsDecodingShared] = useState(initialIrRef.current.isDecoding);
   const [trace, setTrace] = useState("");
   const [traceJson, setTraceJson] = useState("");
   const [outputIr, setOutputIr] = useState("");
@@ -327,6 +345,28 @@ export function App() {
     }
   }, [selectedTag, state, requestLoad]);
 
+  // Decode a shared compressed IR (?irz=) on first mount. Synchronous decode of
+  // the legacy ?ir= param happens inside readInitialIr.
+  useEffect(() => {
+    const initial = initialIrRef.current;
+    if (!initial || !initial.compressed) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const decoded = await decompressIr(initial.compressed!);
+        if (cancelled) return;
+        setIr(decoded);
+      } catch (err) {
+        if (cancelled) return;
+        console.warn("failed to decode shared IR; falling back to default", err);
+        setIr(DEFAULT_IR);
+      } finally {
+        if (!cancelled) setIsDecodingShared(false);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, []);
+
   const onSelectChange = useCallback((e: React.ChangeEvent<HTMLSelectElement>) => {
     const tag = e.target.value;
     if (tag === selectedTag) return;
@@ -355,7 +395,8 @@ export function App() {
   }, [ir, state]);
 
   const runDisabled =
-    state.kind !== "ready" && state.kind !== "done" && state.kind !== "runError";
+    isDecodingShared ||
+    (state.kind !== "ready" && state.kind !== "done" && state.kind !== "runError");
   const selectDisabled =
     state.kind === "loadingManifest" ||
     state.kind === "manifestError" ||
@@ -381,7 +422,20 @@ export function App() {
     url.searchParams.set("branch", artifactBranch);
     if (selectedTag) url.searchParams.set(SHARE_PARAM_TAG, selectedTag);
     else url.searchParams.delete(SHARE_PARAM_TAG);
-    url.searchParams.set(SHARE_PARAM_IR, encodeBase64Url(ir));
+    if (isCompressionSupported()) {
+      try {
+        const compressed = await compressIr(ir);
+        url.searchParams.set(SHARE_PARAM_IR_COMPRESSED, compressed);
+        url.searchParams.delete(SHARE_PARAM_IR);
+      } catch (err) {
+        console.warn("IR compression failed; falling back to legacy ?ir=", err);
+        url.searchParams.set(SHARE_PARAM_IR, encodeBase64Url(ir));
+        url.searchParams.delete(SHARE_PARAM_IR_COMPRESSED);
+      }
+    } else {
+      url.searchParams.set(SHARE_PARAM_IR, encodeBase64Url(ir));
+      url.searchParams.delete(SHARE_PARAM_IR_COMPRESSED);
+    }
     try {
       await navigator.clipboard.writeText(url.toString());
       setShareCopied(true);
