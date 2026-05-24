@@ -234,6 +234,17 @@
       "wasmAsset": "https://raw.githubusercontent.com/xuhongxu96/instcombine-instrumentor/wasm-pkgs/llvmorg-7.1.0/instcombine_driver.wasm"
     },
     {
+      "tag": "llvmorg-6.0.1",
+      "name": "llvmorg-6.0.1",
+      "slug": "llvmorg-6.0.1",
+      "kind": "tag",
+      "publishedAt": "2026-05-23T23:54:00.000Z",
+      "prerelease": false,
+      "bundled": false,
+      "jsAsset": "https://raw.githubusercontent.com/xuhongxu96/instcombine-instrumentor/wasm-pkgs/llvmorg-6.0.1/instcombine_driver.js",
+      "wasmAsset": "https://raw.githubusercontent.com/xuhongxu96/instcombine-instrumentor/wasm-pkgs/llvmorg-6.0.1/instcombine_driver.wasm"
+    },
+    {
       "tag": "main-260523-4f828412ee18",
       "name": "main-260523-4f828412ee18",
       "slug": "main-260523-4f828412ee18",
