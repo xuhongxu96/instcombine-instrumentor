@@ -164,6 +164,60 @@ def patch_signals_header_for_older_llvm(llvm_repo: Path, llvm_version_major: int
     signals_h.write_text(content.replace(include_anchor, '#include <cstdint>\n' + include_anchor, 1))
 
 
+def patch_path_inc_for_older_llvm(llvm_repo: Path, llvm_version_major: int) -> None:
+    # Upstream added Emscripten support to llvm/lib/Support/Unix/Path.inc later
+    # in the LLVM 9+ cycle; older trees fall through to the generic POSIX branch
+    # that references statfs::f_flags / MNT_LOCAL and won't build under emcc.
+    #
+    # Reference: https://github.com/emscripten-core/emscripten/issues/6432
+    if llvm_version_major > 8:
+        return
+
+    path_inc = llvm_repo / "llvm/lib/Support/Unix/Path.inc"
+    if not path_inc.is_file():
+        return
+
+    print(f"Patching {path_inc} for LLVM {llvm_version_major}...")
+    content = path_inc.read_text()
+
+    # Patch 1: extend the `#if defined(__NetBSD__)...` guard immediately
+    # preceding `#define STATVFS_F_FLAG(vfs) (vfs).f_flag` so Emscripten also
+    # uses the .f_flag spelling. The directive may span multiple physical lines
+    # via backslash-newline continuation.
+    flag_anchor = "#define STATVFS_F_FLAG(vfs) (vfs).f_flag\n"
+    flag_idx = content.find(flag_anchor)
+    if flag_idx < 0:
+        return  # Can't find the anchor, maybe it's already patched or the structure is different. Don't risk mangling it.
+    if_anchor = "#if defined(__NetBSD__)"
+    if_idx = content.rfind(if_anchor, 0, flag_idx)
+    if if_idx < 0:
+        raise RuntimeError(f"Could not find #if defined(__NetBSD__) before STATVFS_F_FLAG in {path_inc}")
+    cursor = if_idx
+    while True:
+        nl_idx = content.find("\n", cursor)
+        if nl_idx < 0 or nl_idx >= flag_idx:
+            raise RuntimeError(f"Malformed #if directive in {path_inc}")
+        if nl_idx == 0 or content[nl_idx - 1] != "\\":
+            break
+        cursor = nl_idx + 1
+    if_line = content[if_idx:nl_idx]
+    if "defined(__EMSCRIPTEN__)" not in if_line:
+        content = content[:nl_idx] + " || defined(__EMSCRIPTEN__)" + content[nl_idx:]
+
+    # Patch 2: short-circuit is_local_impl to `return true;` on Emscripten by
+    # inserting an `#elif` branch immediately before the catch-all `#else` that
+    # references MNT_LOCAL.
+    emscripten_branch = "#elif defined(__EMSCRIPTEN__)\n  return true;\n"
+    else_anchor = "#else\n  return !!(STATVFS_F_FLAG(Vfs) & MNT_LOCAL);"
+    if emscripten_branch not in content:
+        else_idx = content.find(else_anchor)
+        if else_idx < 0:
+            raise RuntimeError(f"Could not find is_local_impl #else MNT_LOCAL block in {path_inc}")
+        content = content[:else_idx] + emscripten_branch + content[else_idx:]
+
+    path_inc.write_text(content)
+
+
 def _is_pointer_return(prefix_text: bytes, declarator: Node, allow_star_in_prefix: bool) -> bool:
     type_match = any(hint in prefix_text for hint in POINTER_TYPE_HINTS)
     if not type_match:
@@ -173,6 +227,30 @@ def _is_pointer_return(prefix_text: bytes, declarator: Node, allow_star_in_prefi
     if allow_star_in_prefix and b"*" in prefix_text:
         return True
     return False
+
+
+def _extract_pointer_return_type(func_node: Node, content: bytes) -> bytes | None:
+    """Return the function's pointer return type as a C++ type expression
+    suitable for use inside `static_cast<...>(...)`. Returns None when the type
+    can't be confidently captured (caller falls through to a plain wrap).
+
+    Needed because `__llvm_fuzz_record` deduces its template parameter from the
+    argument type: `return *ArgBegin;` where `*ArgBegin` is e.g. a `Use&` with
+    an implicit conversion to `Value*` fails deduction. Casting at the wrap
+    site forces the conversion before deduction sees the argument.
+    """
+    type_node = func_node.child_by_field_name("type")
+    if type_node is None:
+        return None
+    type_text = content[type_node.start_byte:type_node.end_byte]
+    declarator = func_node.child_by_field_name("declarator")
+    stars = 0
+    while declarator is not None and declarator.type == "pointer_declarator":
+        stars += 1
+        declarator = declarator.child_by_field_name("declarator")
+    if stars == 0:
+        return None
+    return type_text + b" " + (b"*" * stars)
 
 
 def _extract_callee_name(func_node: Node) -> bytes | None:
@@ -318,11 +396,15 @@ def _body_edits(
     body: Node,
     wrap_ids: set[int],
     return_exprs: list[Node],
+    return_type: bytes | None = None,
 ) -> list[tuple[int, int, bytes]]:
     """Produce one set of non-overlapping edits for this body.
 
     `wrap_ids`: call_expression node ids to wrap with __llvm_fuzz_call.
     `return_exprs`: top-level return expression nodes to additionally wrap with __llvm_fuzz_record.
+    `return_type`: when provided, the inner expression of each return wrap is also wrapped with
+        `static_cast<return_type>(...)` so non-pointer expressions that convert to the return type
+        (e.g. `Use&` → `Value*`) survive template deduction inside `__llvm_fuzz_record`.
 
     Resolves overlaps by treating the outermost "unit" (whatever's at the top of any wrap chain)
     as the edit target, and splicing inner wraps into its replacement text.
@@ -349,6 +431,8 @@ def _body_edits(
             continue
         seen_unit.add(expr.id)
         inner = _render_wrap_unit(expr, content, wrap_ids)
+        if return_type is not None:
+            inner = b"static_cast<class " + return_type + b">(" + inner + b")"
         edits.append((expr.start_byte, expr.end_byte, b"__llvm_fuzz_record(" + inner + b")"))
 
     # Now emit outermost call wraps that weren't covered by a return.
@@ -454,18 +538,22 @@ def _patch_file_generic(
         # still get attributed). Return wraps only in pointer-return functions.
         wrap_ids = _collect_wrap_call_ids(body, content, instrumented_names)
         return_exprs = _collect_returns_for_wrap(content, body) if is_pointer else []
+        return_type = _extract_pointer_return_type(func_node, content) if is_pointer else None
 
         if wrap_ids or return_exprs:
-            body_edits = _body_edits(content, body, wrap_ids, return_exprs)
+            body_edits = _body_edits(content, body, wrap_ids, return_exprs, return_type=return_type)
             if body_edits:
                 edits.extend(body_edits)
                 changed = True
 
-        # Special-case InstCombinerImpl::run (only in InstructionCombining.cpp).
+        # Special-case the InstCombine top-level run method (only in InstructionCombining.cpp).
+        # LLVM <= 5 names the class InstCombiner; LLVM >= 6 renamed it to InstCombinerImpl.
+        # `InstCombiner::` is not a substring of `InstCombinerImpl::run` (next char is 'I'),
+        # so the two checks don't overlap.
         if (
             is_inst_combining_cpp
             and get_function_name(func_node) == b"run"
-            and b"InstCombinerImpl" in declarator.text
+            and (b"InstCombinerImpl" in declarator.text or b"InstCombiner::" in declarator.text)
         ):
             if b"llvm_fuzz::start_iteration()" not in body.text:
                 insert_at = body.start_byte + 1
@@ -603,6 +691,7 @@ def patch_llvm(llvm_repo: Path) -> None:
 
     create_fuzz_runtime(llvm_repo)
     patch_signals_header_for_older_llvm(llvm_repo, llvm_version_major)
+    patch_path_inc_for_older_llvm(llvm_repo, llvm_version_major)
 
     print("Collecting instrumented function names (first pass)...")
     instrumented_names = _collect_instrumented_names(llvm_repo)

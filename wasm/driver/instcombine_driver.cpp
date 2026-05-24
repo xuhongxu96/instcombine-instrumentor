@@ -6,6 +6,8 @@
 // up from CWD which the JS worker chdirs to /work before calling main).
 
 #include "llvm/Analysis/CGSCCPassManager.h"
+#include "llvm/Analysis/LoopAnalysisManager.h"
+#include "llvm/Config/llvm-config.h"
 #include "llvm/IR/LLVMContext.h"
 #include "llvm/IR/Module.h"
 #include "llvm/IR/PassManager.h"
@@ -15,6 +17,13 @@
 #include "llvm/Support/SourceMgr.h"
 #include "llvm/Support/raw_ostream.h"
 #include "llvm/Transforms/InstCombine/InstCombine.h"
+
+// OpenFlags::OF_Text was named F_Text before LLVM 7.
+#if LLVM_VERSION_MAJOR < 7
+#define LLVM_DRIVER_OF_TEXT llvm::sys::fs::F_Text
+#else
+#define LLVM_DRIVER_OF_TEXT llvm::sys::fs::OF_Text
+#endif
 
 int main(int /*argc*/, char ** /*argv*/) {
   llvm::LLVMContext Ctx;
@@ -47,7 +56,7 @@ int main(int /*argc*/, char ** /*argv*/) {
 
   // Serialize the post-pass module so the webapp can show the optimized IR.
   std::error_code EC;
-  llvm::raw_fd_ostream OutLL("/work/output.ll", EC, llvm::sys::fs::OF_Text);
+  llvm::raw_fd_ostream OutLL("/work/output.ll", EC, LLVM_DRIVER_OF_TEXT);
   if (!EC) {
     M->print(OutLL, /*AAW=*/nullptr);
   } else {

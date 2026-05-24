@@ -29,6 +29,7 @@ else
     git -C "$LLVM_DIR" fetch --depth 1 origin "$REF"
 fi
 
+git -C "$LLVM_DIR" reset --hard
 git -C "$LLVM_DIR" checkout --detach FETCH_HEAD
 
 echo "Checked out $(git -C "$LLVM_DIR" rev-parse HEAD) into $LLVM_DIR"

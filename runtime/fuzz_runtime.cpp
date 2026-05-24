@@ -1,4 +1,5 @@
 #include "llvm/IR/fuzz_runtime.h"
+#include "llvm/Config/llvm-config.h"
 #include "llvm/IR/Function.h"
 #include "llvm/IR/Value.h"
 #include "llvm/IR/Instruction.h"
@@ -8,6 +9,16 @@
 #include "llvm/Support/Casting.h"
 #include "llvm/Support/raw_ostream.h"
 #include "llvm/Support/FileSystem.h"
+
+// OpenFlags were renamed F_* -> OF_* in LLVM 7; the F_* aliases were dropped
+// in LLVM 13. Pick the right symbol for the version we're compiling against.
+#if LLVM_VERSION_MAJOR < 7
+#define LLVM_FUZZ_OF_NONE   llvm::sys::fs::F_None
+#define LLVM_FUZZ_OF_APPEND llvm::sys::fs::F_Append
+#else
+#define LLVM_FUZZ_OF_NONE   llvm::sys::fs::OF_None
+#define LLVM_FUZZ_OF_APPEND llvm::sys::fs::OF_Append
+#endif
 #include <map>
 #include <vector>
 #include <string>
@@ -312,7 +323,7 @@ void record_replacement(void* old_val, void* new_val) {
 
 static void dump_text(bool first_dump) {
     std::error_code EC;
-    auto open_flags = first_dump ? llvm::sys::fs::OF_None : llvm::sys::fs::OF_Append;
+    auto open_flags = first_dump ? LLVM_FUZZ_OF_NONE : LLVM_FUZZ_OF_APPEND;
     llvm::raw_fd_ostream out("llvm_fuzz_info.txt", EC, open_flags);
     if (EC) return;
     if (first_dump) out << "=== SESSION START ===\n";
@@ -350,7 +361,7 @@ static void dump_text(bool first_dump) {
 
 static void dump_json(bool first_dump) {
     std::error_code EC;
-    auto open_flags = first_dump ? llvm::sys::fs::OF_None : llvm::sys::fs::OF_Append;
+    auto open_flags = first_dump ? LLVM_FUZZ_OF_NONE : LLVM_FUZZ_OF_APPEND;
     llvm::raw_fd_ostream out("llvm_fuzz_info.json", EC, open_flags);
     if (EC) return;
 
