@@ -107,6 +107,8 @@ Clicking **Share** copies a permalink that re-creates your current session: same
 
 ![Share button after click — "link copied"](images/share-link-copied.png)
 
+Opening a shared link **runs automatically**: once the linked wasm version has loaded and the IR has decoded, the webapp fires **Run** for you, so the recipient lands directly on the trace without an extra click. (Opening the app with no IR parameter does not auto-run — you start from the default IR and press **Run** yourself.)
+
 Supported URL parameters:
 
 | Param | Meaning |
@@ -171,7 +173,7 @@ Runs on every push and PR for verification, and on `release/*` tags it bundles `
 
 #### 11.2 `native-release-auto.yml`
 
-Scheduled **Monday 05:00 UTC**, also `workflow_dispatch`-able. Scans `llvm/llvm-project` for stable `llvmorg-X.Y.Z` tags that don't yet have a matching `release/<tag>`, picks the newest `max_tags`, and for each missing tag pushes a `release/<llvm-tag>`, pre-creates the GitHub Release, then explicitly dispatches `native-build.yml` against that tag.
+Scheduled **Monday 05:00 UTC**, also `workflow_dispatch`-able. Scans `llvm/llvm-project` for stable `llvmorg-X.Y.Z` tags that don't yet have a matching `release/<tag>` **and that are newer than the newest release you've already published**, picks the newest `max_tags`, and for each missing tag pushes a `release/<llvm-tag>`, pre-creates the GitHub Release, then explicitly dispatches `native-build.yml` against that tag. The newest-release cutoff means raising `max_tags` only reaches forward to newer versions — it never backfills older versions you deliberately skipped (use `native-release-manual.yml` for those).
 
 Inputs:
 

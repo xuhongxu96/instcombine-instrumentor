@@ -88,19 +88,22 @@ interface InitialIr {
   value: string;
   isDecoding: boolean;
   compressed: string | null;
+  // True when the IR came from a share param (?irz= or ?ir=) — the signal that
+  // this is a shared link we should auto-Run once the wasm is ready.
+  fromShare: boolean;
 }
 
 function readInitialIr(): InitialIr {
   const params = new URLSearchParams(window.location.search);
   const compressed = params.get(SHARE_PARAM_IR_COMPRESSED);
   if (compressed) {
-    return { value: "", isDecoding: true, compressed };
+    return { value: "", isDecoding: true, compressed, fromShare: true };
   }
   const legacy = params.get(SHARE_PARAM_IR);
   if (legacy) {
-    return { value: decodeBase64Url(legacy) ?? DEFAULT_IR, isDecoding: false, compressed: null };
+    return { value: decodeBase64Url(legacy) ?? DEFAULT_IR, isDecoding: false, compressed: null, fromShare: true };
   }
-  return { value: DEFAULT_IR, isDecoding: false, compressed: null };
+  return { value: DEFAULT_IR, isDecoding: false, compressed: null, fromShare: false };
 }
 
 function versionStorageKey(branch: string): string {
@@ -180,6 +183,7 @@ export function App() {
   const workerReadyRef = useRef(false);
   const pendingLoadRef = useRef<string | null>(null);
   const lastLoadRequestRef = useRef<string | null>(null);
+  const shouldAutoRunRef = useRef(initialIrRef.current?.fromShare ?? false);
 
   const iterations = useMemo(() => parseTraceJsonl(traceJson), [traceJson]);
 
@@ -393,6 +397,18 @@ export function App() {
     setRunError("");
     workerRef.current.postMessage({ type: "run", ir });
   }, [ir, state]);
+
+  // Auto-Run once for shared links (?irz=/?ir=): fire as soon as the shared IR
+  // is decoded and the wasm is loaded. The two conditions can resolve in either
+  // order; whichever lands last re-runs this effect. onRun is recreated when the
+  // decoded IR lands (its deps include `ir`), so the run uses the shared IR.
+  useEffect(() => {
+    if (!shouldAutoRunRef.current) return;
+    if (isDecodingShared) return;
+    if (state.kind !== "ready") return;
+    shouldAutoRunRef.current = false;
+    onRun();
+  }, [state, isDecodingShared, onRun]);
 
   const runDisabled =
     isDecodingShared ||
