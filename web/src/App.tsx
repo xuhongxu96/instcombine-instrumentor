@@ -501,13 +501,28 @@ export function App() {
           {shareCopied ? "link copied" : "Share"}
         </button>
         <a
-          className="manual-link"
+          className="toolbar-icon-link"
           href="https://xuhongxu.com/projects/instcombine-debugger/USER_MANUAL.html"
           target="_blank"
           rel="noopener noreferrer"
-          title="Open the user manual in a new tab"
+          title="Open help manual in a new tab"
+          aria-label="Open help manual in a new tab"
         >
-          manual
+          <svg viewBox="0 0 16 16" aria-hidden="true">
+            <path d="M8 0a8 8 0 1 0 0 16A8 8 0 0 0 8 0Zm0 14.5A6.5 6.5 0 1 1 8 1.5a6.5 6.5 0 0 1 0 13ZM6.84 6.58a.75.75 0 0 1-1.48-.26 2.65 2.65 0 0 1 5.2.77c0 .97-.46 1.5-1.03 1.98-.55.46-.84.77-.84 1.27v.16a.75.75 0 0 1-1.5 0v-.16c0-1.15.68-1.86 1.38-2.45.48-.4.49-.62.49-.81a1.15 1.15 0 0 0-2.22-.5ZM8 12.75a1 1 0 1 0 0-2 1 1 0 0 0 0 2Z" />
+          </svg>
+        </a>
+        <a
+          className="toolbar-icon-link"
+          href="https://github.com/xuhongxu96/instcombine-instrumentor"
+          target="_blank"
+          rel="noopener noreferrer"
+          title="Open the GitHub repository in a new tab"
+          aria-label="Open the GitHub repository in a new tab"
+        >
+          <svg viewBox="0 0 16 16" aria-hidden="true">
+            <path d="M8 0C3.58 0 0 3.69 0 8.23c0 3.63 2.29 6.7 5.47 7.78.4.08.55-.18.55-.4 0-.2-.01-.85-.01-1.54-2.01.38-2.53-.51-2.69-.98-.09-.24-.48-.98-.82-1.18-.28-.15-.68-.55-.01-.56.63-.01 1.08.59 1.23.84.72 1.24 1.87.89 2.33.68.07-.53.28-.89.51-1.09-1.78-.21-3.64-.91-3.64-4.03 0-.89.31-1.62.82-2.19-.08-.2-.36-1.02.08-2.13 0 0 .67-.22 2.2.84.64-.18 1.32-.27 2-.27s1.36.09 2 .27c1.53-1.06 2.2-.84 2.2-.84.44 1.11.16 1.93.08 2.13.51.57.82 1.29.82 2.19 0 3.13-1.87 3.82-3.65 4.03.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .22.15.49.55.4A8.24 8.24 0 0 0 16 8.23C16 3.69 12.42 0 8 0Z" />
+          </svg>
         </a>
         <span className="status">{statusText}</span>
         <label className="theme-picker">
