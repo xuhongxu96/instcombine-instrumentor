@@ -518,7 +518,7 @@ export function App() {
         </button>
         <a
           className="toolbar-icon-link"
-          href="https://xuhongxu.com/projects/instcombine-debugger/USER_MANUAL.html"
+          href="https://github.com/xuhongxu96/instcombine-instrumentor/blob/main/docs/USER_MANUAL.md"
           target="_blank"
           rel="noopener noreferrer"
           title="Open help manual in a new tab"
