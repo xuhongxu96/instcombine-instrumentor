@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-05-31T09:17:37.831Z",
+  "generatedAt": "2026-06-01T12:05:00.872Z",
   "defaultTag": "llvmorg-22.1.6",
   "releases": [
     {
@@ -256,11 +256,22 @@
       "wasmAsset": "https://raw.githubusercontent.com/xuhongxu96/instcombine-instrumentor/wasm-pkgs/llvmorg-5.0.1/instcombine_driver.wasm"
     },
     {
+      "tag": "main-260601-56c9a2c79666",
+      "name": "main-260601-56c9a2c79666",
+      "slug": "main-260601-56c9a2c79666",
+      "kind": "commit",
+      "publishedAt": "2026-06-01T12:05:00.867Z",
+      "prerelease": false,
+      "bundled": false,
+      "jsAsset": "https://raw.githubusercontent.com/xuhongxu96/instcombine-instrumentor/wasm-pkgs/main-260601-56c9a2c79666/instcombine_driver.js",
+      "wasmAsset": "https://raw.githubusercontent.com/xuhongxu96/instcombine-instrumentor/wasm-pkgs/main-260601-56c9a2c79666/instcombine_driver.wasm"
+    },
+    {
       "tag": "main-260531-c78c9004a7f8",
       "name": "main-260531-c78c9004a7f8",
       "slug": "main-260531-c78c9004a7f8",
       "kind": "commit",
-      "publishedAt": "2026-05-31T09:17:37.758Z",
+      "publishedAt": "2026-05-31T09:17:38Z",
       "prerelease": false,
       "bundled": false,
       "jsAsset": "https://raw.githubusercontent.com/xuhongxu96/instcombine-instrumentor/wasm-pkgs/main-260531-c78c9004a7f8/instcombine_driver.js",
