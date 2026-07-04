@@ -108,7 +108,7 @@ static bool& session_started_flag() {
 // ---- Helpers --------------------------------------------------------------
 
 static bool is_real_value_ptr(void* v) {
-    return reinterpret_cast<uintptr_t>(v) >= 0x10000;
+    return reinterpret_cast<uintptr_t>(v) >= 0x10000 && reinterpret_cast<intptr_t>(v) != -1;
 }
 
 static std::string format_opcode(void* v) {
