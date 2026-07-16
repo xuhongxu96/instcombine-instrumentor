@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-07-13T10:08:22.460Z",
+  "generatedAt": "2026-07-16T08:44:30.971Z",
   "defaultTag": "llvmorg-22.1.8",
   "releases": [
     {
@@ -278,11 +278,22 @@
       "wasmAsset": "https://raw.githubusercontent.com/xuhongxu96/instcombine-instrumentor/wasm-pkgs/llvmorg-5.0.1/instcombine_driver.wasm"
     },
     {
+      "tag": "main-260716-88acd428fd72",
+      "name": "main-260716-88acd428fd72",
+      "slug": "main-260716-88acd428fd72",
+      "kind": "commit",
+      "publishedAt": "2026-07-16T08:44:30.967Z",
+      "prerelease": false,
+      "bundled": false,
+      "jsAsset": "https://raw.githubusercontent.com/xuhongxu96/instcombine-instrumentor/wasm-pkgs/main-260716-88acd428fd72/instcombine_driver.js",
+      "wasmAsset": "https://raw.githubusercontent.com/xuhongxu96/instcombine-instrumentor/wasm-pkgs/main-260716-88acd428fd72/instcombine_driver.wasm"
+    },
+    {
       "tag": "main-260713-95f1eab03f35",
       "name": "main-260713-95f1eab03f35",
       "slug": "main-260713-95f1eab03f35",
       "kind": "commit",
-      "publishedAt": "2026-07-13T10:08:22.453Z",
+      "publishedAt": "2026-07-13T10:08:22Z",
       "prerelease": false,
       "bundled": false,
       "jsAsset": "https://raw.githubusercontent.com/xuhongxu96/instcombine-instrumentor/wasm-pkgs/main-260713-95f1eab03f35/instcombine_driver.js",
@@ -342,17 +353,6 @@
       "bundled": false,
       "jsAsset": "https://raw.githubusercontent.com/xuhongxu96/instcombine-instrumentor/wasm-pkgs/main-260622-b6a0f6c79fee/instcombine_driver.js",
       "wasmAsset": "https://raw.githubusercontent.com/xuhongxu96/instcombine-instrumentor/wasm-pkgs/main-260622-b6a0f6c79fee/instcombine_driver.wasm"
-    },
-    {
-      "tag": "main-260619-f6fd6ea3c1b5",
-      "name": "main-260619-f6fd6ea3c1b5",
-      "slug": "main-260619-f6fd6ea3c1b5",
-      "kind": "commit",
-      "publishedAt": "2026-06-19T11:08:34Z",
-      "prerelease": false,
-      "bundled": false,
-      "jsAsset": "https://raw.githubusercontent.com/xuhongxu96/instcombine-instrumentor/wasm-pkgs/main-260619-f6fd6ea3c1b5/instcombine_driver.js",
-      "wasmAsset": "https://raw.githubusercontent.com/xuhongxu96/instcombine-instrumentor/wasm-pkgs/main-260619-f6fd6ea3c1b5/instcombine_driver.wasm"
     }
   ]
 }
