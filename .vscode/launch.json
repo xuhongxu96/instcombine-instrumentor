@@ -1,0 +1,24 @@
+{
+    "configurations": [
+        {
+            "type": "lldb-dap",
+            "request": "launch",
+            "name": "opt",
+            "program": "${workspaceFolder}/build/llvm-dbg/bin/opt",
+            "args": [
+                "-passes=instcombine",
+                "test.ll",
+                "-S"
+            ],
+            "env": [],
+            "cwd": "${workspaceFolder}"
+        },
+        {
+            "name": "patch_llvm.py",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${workspaceFolder}/patch_llvm.py",
+            "console": "integratedTerminal"
+        },
+    ]
+}

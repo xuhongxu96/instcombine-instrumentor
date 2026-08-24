@@ -287,7 +287,7 @@ void start_iteration() {
   iter_counter++;
 }
 
-static void record_stacktrace_unlocked(void *val, const char *file = nullptr,
+static void record_stacktrace_internal(void *val, const char *file = nullptr,
                                        int line = 0,
                                        const char *func = nullptr) {
   if (is_trace_disabled())
@@ -353,7 +353,7 @@ void record_stacktrace(void *val, const char *file, int line,
     return;
   if (!val)
     return;
-  record_stacktrace_unlocked(val, file, line, func);
+  record_stacktrace_internal(val, file, line, func);
 }
 
 void record_replacement(void *old_val, void *new_val) {
@@ -362,7 +362,7 @@ void record_replacement(void *old_val, void *new_val) {
   if (!old_val || !new_val)
     return;
 
-  record_stacktrace_unlocked(new_val);
+  record_stacktrace_internal(new_val);
 
   std::string old_str, new_str;
   if (is_real_value_ptr(old_val)) {
