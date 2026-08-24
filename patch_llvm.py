@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """Patch an LLVM source tree to record InstCombine folds and RAUWs.
 
 Port of scripts/fuzz/patch_llvm.ts from the lpo-agent-data repo. Behavior is
@@ -10,8 +9,8 @@ from __future__ import annotations
 import argparse
 import re
 import sys
+from collections.abc import Iterator
 from pathlib import Path
-from typing import Iterator
 
 import tree_sitter_cpp
 from tree_sitter import Language, Node, Parser, Query
@@ -78,21 +77,28 @@ def get_function_name(func_node: Node) -> bytes:
         return b""
 
     inner = declarator
-    while inner.type in ("function_declarator", "pointer_declarator", "reference_declarator"):
+    while inner.type in (
+        "function_declarator",
+        "pointer_declarator",
+        "reference_declarator",
+    ):
         child = inner.child_by_field_name("declarator")
         if child is None:
             break
         inner = child
 
     if inner.type in ("identifier", "field_identifier"):
+        assert inner.text
         return inner.text
     if inner.type == "qualified_identifier":
         name_node = inner.child_by_field_name("name")
         if name_node is not None:
+            assert name_node.text
             return name_node.text
 
     idents = list(descendants_of_type(inner, "identifier"))
     if idents:
+        assert idents[-1].text
         return idents[-1].text
 
     return b""
@@ -147,7 +153,9 @@ def detect_llvm_major_version(llvm_repo: Path) -> int:
     raise RuntimeError(f"Could not detect LLVM_VERSION_MAJOR under {llvm_repo}")
 
 
-def patch_signals_header_for_older_llvm(llvm_repo: Path, llvm_version_major: int) -> None:
+def patch_signals_header_for_older_llvm(
+    llvm_repo: Path, llvm_version_major: int
+) -> None:
     if llvm_version_major > 13:
         return
 
@@ -161,7 +169,9 @@ def patch_signals_header_for_older_llvm(llvm_repo: Path, llvm_version_major: int
     if include_anchor not in content:
         raise RuntimeError(f"Could not find include anchor in {signals_h}")
 
-    signals_h.write_text(content.replace(include_anchor, '#include <cstdint>\n' + include_anchor, 1))
+    signals_h.write_text(
+        content.replace(include_anchor, "#include <cstdint>\n" + include_anchor, 1)
+    )
 
 
 def patch_path_inc_for_older_llvm(llvm_repo: Path, llvm_version_major: int) -> None:
@@ -191,7 +201,9 @@ def patch_path_inc_for_older_llvm(llvm_repo: Path, llvm_version_major: int) -> N
     if_anchor = "#if defined(__NetBSD__)"
     if_idx = content.rfind(if_anchor, 0, flag_idx)
     if if_idx < 0:
-        raise RuntimeError(f"Could not find #if defined(__NetBSD__) before STATVFS_F_FLAG in {path_inc}")
+        raise RuntimeError(
+            f"Could not find #if defined(__NetBSD__) before STATVFS_F_FLAG in {path_inc}"
+        )
     cursor = if_idx
     while True:
         nl_idx = content.find("\n", cursor)
@@ -212,21 +224,23 @@ def patch_path_inc_for_older_llvm(llvm_repo: Path, llvm_version_major: int) -> N
     if emscripten_branch not in content:
         else_idx = content.find(else_anchor)
         if else_idx < 0:
-            raise RuntimeError(f"Could not find is_local_impl #else MNT_LOCAL block in {path_inc}")
+            raise RuntimeError(
+                f"Could not find is_local_impl #else MNT_LOCAL block in {path_inc}"
+            )
         content = content[:else_idx] + emscripten_branch + content[else_idx:]
 
     path_inc.write_text(content)
 
 
-def _is_pointer_return(prefix_text: bytes, declarator: Node, allow_star_in_prefix: bool) -> bool:
+def _is_pointer_return(
+    prefix_text: bytes, declarator: Node, allow_star_in_prefix: bool
+) -> bool:
     type_match = any(hint in prefix_text for hint in POINTER_TYPE_HINTS)
     if not type_match:
         return False
     if declarator.type == "pointer_declarator":
         return True
-    if allow_star_in_prefix and b"*" in prefix_text:
-        return True
-    return False
+    return bool(allow_star_in_prefix and b"*" in prefix_text)
 
 
 def _extract_pointer_return_type(func_node: Node, content: bytes) -> bytes | None:
@@ -242,7 +256,7 @@ def _extract_pointer_return_type(func_node: Node, content: bytes) -> bytes | Non
     type_node = func_node.child_by_field_name("type")
     if type_node is None:
         return None
-    type_text = content[type_node.start_byte:type_node.end_byte]
+    type_text = content[type_node.start_byte : type_node.end_byte]
     declarator = func_node.child_by_field_name("declarator")
     stars = 0
     while declarator is not None and declarator.type == "pointer_declarator":
@@ -253,7 +267,7 @@ def _extract_pointer_return_type(func_node: Node, content: bytes) -> bytes | Non
     return type_text + b" " + (b"*" * stars)
 
 
-def _extract_callee_name(func_node: Node) -> bytes | None:
+def _extract_callee_name(func_node: Node | None) -> bytes | None:
     """Extract the bare callee name from a call_expression's `function` field child.
 
     Walks the field structure explicitly (don't use generic descendant search —
@@ -281,9 +295,7 @@ def _extract_callee_name(func_node: Node) -> bytes | None:
 def _call_is_allowlisted(bare: bytes, instrumented_names: set[bytes]) -> bool:
     if bare in instrumented_names:
         return True
-    if CREATE_PATTERN.match(bare):
-        return True
-    return False
+    return bool(CREATE_PATTERN.match(bare))
 
 
 def _is_inside_fuzz_wrap(node: Node, content: bytes) -> bool:
@@ -293,7 +305,7 @@ def _is_inside_fuzz_wrap(node: Node, content: bytes) -> bool:
         if current.type == "call_expression":
             func = current.child_by_field_name("function")
             if func is not None:
-                func_text = content[func.start_byte:func.end_byte]
+                func_text = content[func.start_byte : func.end_byte]
                 if func_text in (b"__llvm_fuzz_call", b"__llvm_fuzz_record"):
                     return True
         current = current.parent
@@ -317,7 +329,7 @@ def _is_address_of_operand(node: Node, content: bytes) -> bool:
     op = parent.child_by_field_name("operator")
     if op is None:
         return False
-    return content[op.start_byte:op.end_byte] == b"&"
+    return content[op.start_byte : op.end_byte] == b"&"
 
 
 def _collect_wrap_call_ids(
@@ -334,7 +346,7 @@ def _collect_wrap_call_ids(
         # Idempotency: skip the wrapper itself and skip calls already inside a wrapper.
         func = call.child_by_field_name("function")
         if func is not None:
-            func_text = content[func.start_byte:func.end_byte]
+            func_text = content[func.start_byte : func.end_byte]
             if func_text in (b"__llvm_fuzz_call", b"__llvm_fuzz_record"):
                 continue
         if _is_inside_fuzz_wrap(call, content):
@@ -368,17 +380,17 @@ def _render_with_inner_wraps(node: Node, content: bytes, wrap_ids: set[int]) -> 
     """Render node's text with inner wrap_ids descendants substituted."""
     inner = _find_direct_wrap_descendants(node, wrap_ids)
     if not inner:
-        return content[node.start_byte:node.end_byte]
+        return content[node.start_byte : node.end_byte]
     inner.sort(key=lambda n: n.start_byte)
     parts: list[bytes] = []
     cursor = node.start_byte
     for w in inner:
         if w.start_byte > cursor:
-            parts.append(content[cursor:w.start_byte])
+            parts.append(content[cursor : w.start_byte])
         parts.append(_render_wrap_unit(w, content, wrap_ids))
         cursor = w.end_byte
     if cursor < node.end_byte:
-        parts.append(content[cursor:node.end_byte])
+        parts.append(content[cursor : node.end_byte])
     return b"".join(parts)
 
 
@@ -433,7 +445,9 @@ def _body_edits(
         inner = _render_wrap_unit(expr, content, wrap_ids)
         if return_type is not None:
             inner = b"static_cast<class " + return_type + b">(" + inner + b")"
-        edits.append((expr.start_byte, expr.end_byte, b"__llvm_fuzz_record(" + inner + b")"))
+        edits.append(
+            (expr.start_byte, expr.end_byte, b"__llvm_fuzz_record(" + inner + b")")
+        )
 
     # Now emit outermost call wraps that weren't covered by a return.
     # Need stable iteration: sort wrap_ids by depth (outermost first) via byte range.
@@ -471,10 +485,13 @@ def patch_value_cpp(file_path: Path) -> None:
             continue
         if get_function_name(func_node) != b"doRAUW":
             continue
+        assert body.text
         if b"__llvm_fuzz_record_replace" in body.text:
             continue
         insert_at = body.start_byte + 1
-        edits.append((insert_at, insert_at, b"\n  __llvm_fuzz_record_replace(this, New);"))
+        edits.append(
+            (insert_at, insert_at, b"\n  __llvm_fuzz_record_replace(this, New);")
+        )
 
     if not edits:
         return
@@ -494,7 +511,7 @@ def _collect_returns_for_wrap(content: bytes, body: Node) -> list[Node]:
             continue
         if is_inside_nested_scope(ret_node, body):
             continue
-        expr_text = content[expr_node.start_byte:expr_node.end_byte]
+        expr_text = content[expr_node.start_byte : expr_node.end_byte]
         if b"__llvm_fuzz_record" in expr_text or expr_text == b"nullptr":
             continue
         result.append(expr_node)
@@ -531,17 +548,23 @@ def _patch_file_generic(
         if declarator is None:
             continue
 
-        prefix_text = content[func_node.start_byte:declarator.start_byte]
-        is_pointer = _is_pointer_return(prefix_text, declarator, allow_star_in_prefix=allow_star_in_prefix)
+        prefix_text = content[func_node.start_byte : declarator.start_byte]
+        is_pointer = _is_pointer_return(
+            prefix_text, declarator, allow_star_in_prefix=allow_star_in_prefix
+        )
 
         # Call wraps apply in every body (so calls from utility/void/bool functions
         # still get attributed). Return wraps only in pointer-return functions.
         wrap_ids = _collect_wrap_call_ids(body, content, instrumented_names)
         return_exprs = _collect_returns_for_wrap(content, body) if is_pointer else []
-        return_type = _extract_pointer_return_type(func_node, content) if is_pointer else None
+        return_type = (
+            _extract_pointer_return_type(func_node, content) if is_pointer else None
+        )
 
         if wrap_ids or return_exprs:
-            body_edits = _body_edits(content, body, wrap_ids, return_exprs, return_type=return_type)
+            body_edits = _body_edits(
+                content, body, wrap_ids, return_exprs, return_type=return_type
+            )
             if body_edits:
                 edits.extend(body_edits)
                 changed = True
@@ -550,14 +573,21 @@ def _patch_file_generic(
         # LLVM <= 5 names the class InstCombiner; LLVM >= 6 renamed it to InstCombinerImpl.
         # `InstCombiner::` is not a substring of `InstCombinerImpl::run` (next char is 'I'),
         # so the two checks don't overlap.
+        assert declarator.text
         if (
             is_inst_combining_cpp
             and get_function_name(func_node) == b"run"
-            and (b"InstCombinerImpl" in declarator.text or b"InstCombiner::" in declarator.text)
+            and (
+                b"InstCombinerImpl" in declarator.text
+                or b"InstCombiner::" in declarator.text
+            )
         ):
+            assert body.text
             if b"llvm_fuzz::start_iteration()" not in body.text:
                 insert_at = body.start_byte + 1
-                edits.append((insert_at, insert_at, b"\n  llvm_fuzz::start_iteration();"))
+                edits.append(
+                    (insert_at, insert_at, b"\n  llvm_fuzz::start_iteration();")
+                )
                 changed = True
 
             if b"dump_iteration_info" not in body.text:
@@ -567,13 +597,15 @@ def _patch_file_generic(
                         continue
                     if is_inside_nested_scope(ret_node, body):
                         continue
-                    ret_text = content[ret_node.start_byte:ret_node.end_byte]
+                    ret_text = content[ret_node.start_byte : ret_node.end_byte]
                     if b"MadeIRChange" in ret_text:
-                        edits.append((
-                            ret_node.start_byte,
-                            ret_node.end_byte,
-                            b"if (MadeIRChange) llvm_fuzz::dump_iteration_info(); return MadeIRChange;",
-                        ))
+                        edits.append(
+                            (
+                                ret_node.start_byte,
+                                ret_node.end_byte,
+                                b"if (MadeIRChange) llvm_fuzz::dump_iteration_info(); return MadeIRChange;",
+                            )
+                        )
                         changed = True
 
     if not changed:
@@ -593,7 +625,9 @@ def patch_inst_combine_file(file_path: Path, instrumented_names: set[bytes]) -> 
     )
 
 
-def patch_instruction_simplify_file(file_path: Path, instrumented_names: set[bytes]) -> None:
+def patch_instruction_simplify_file(
+    file_path: Path, instrumented_names: set[bytes]
+) -> None:
     _patch_file_generic(
         file_path,
         instrumented_names,
@@ -614,7 +648,9 @@ def update_core_cmake(file_path: Path) -> None:
         count=1,
     )
     if count != 1:
-        raise RuntimeError(f"Could not find LLVMCore library declaration in {file_path}")
+        raise RuntimeError(
+            f"Could not find LLVMCore library declaration in {file_path}"
+        )
     file_path.write_text(new_content)
 
 
@@ -677,8 +713,10 @@ def _collect_instrumented_names(llvm_repo: Path) -> set[bytes]:
             declarator = func_node.child_by_field_name("declarator")
             if declarator is None:
                 continue
-            prefix_text = content[func_node.start_byte:declarator.start_byte]
-            if _is_pointer_return(prefix_text, declarator, allow_star_in_prefix=allow_star):
+            prefix_text = content[func_node.start_byte : declarator.start_byte]
+            if _is_pointer_return(
+                prefix_text, declarator, allow_star_in_prefix=allow_star
+            ):
                 name = get_function_name(func_node)
                 if name:
                     names.add(name)
@@ -729,8 +767,12 @@ def patch_llvm(llvm_repo: Path) -> None:
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description="Patch LLVM source for InstCombine fuzz tracing.")
-    parser.add_argument("--llvm-repo", help="Path to LLVM repository", default="thirdparty/llvm-project")
+    parser = argparse.ArgumentParser(
+        description="Patch LLVM source for InstCombine fuzz tracing."
+    )
+    parser.add_argument(
+        "--llvm-repo", help="Path to LLVM repository", default="thirdparty/llvm-project"
+    )
     args = parser.parse_args(argv)
 
     llvm_repo = Path(args.llvm_repo)
