@@ -730,7 +730,7 @@ def patch_llvm(llvm_repo: Path) -> None:
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Patch LLVM source for InstCombine fuzz tracing.")
-    parser.add_argument("--llvm-repo", required=True, help="Path to LLVM repository")
+    parser.add_argument("--llvm-repo", help="Path to LLVM repository", default="thirdparty/llvm-project")
     args = parser.parse_args(argv)
 
     llvm_repo = Path(args.llvm_repo)

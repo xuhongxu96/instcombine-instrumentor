@@ -4,7 +4,7 @@ set -euo pipefail
 OPT_BIN=${OPT_BIN:-build/llvm-rel/bin/opt}
 TRACE_FILE=${TRACE_FILE:-llvm_fuzz_info.txt}
 TRACE_JSON=${TRACE_JSON:-llvm_fuzz_info.json}
-SMOKE_IR=${SMOKE_IR:-$(mktemp --suffix=.ll)}
+SMOKE_IR=${SMOKE_IR:-$(mktemp)}
 
 cat > "$SMOKE_IR" <<'EOF'
 define i32 @f(i32 %x) {

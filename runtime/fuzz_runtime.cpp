@@ -24,7 +24,6 @@
 #include <cstdlib>
 #include <cstring>
 #include <map>
-#include <mutex>
 #include <string>
 #include <vector>
 
@@ -89,11 +88,6 @@ CallScope::~CallScope() {
     return;
   if (!call_path.empty())
     call_path.pop_back();
-}
-
-static std::mutex &get_global_mutex() {
-  static std::mutex global_mutex;
-  return global_mutex;
 }
 
 static std::map<void *, TraceInfo> &get_trace_map() {
@@ -288,7 +282,6 @@ void start_iteration() {
 
   dump_iteration_info();
 
-  std::lock_guard<std::mutex> lock(get_global_mutex());
   iter_state.new_values.clear();
   iter_state.replacements.clear();
   iter_counter++;
@@ -360,7 +353,6 @@ void record_stacktrace(void *val, const char *file, int line,
     return;
   if (!val)
     return;
-  std::lock_guard<std::mutex> lock(get_global_mutex());
   record_stacktrace_unlocked(val, file, line, func);
 }
 
@@ -370,7 +362,6 @@ void record_replacement(void *old_val, void *new_val) {
   if (!old_val || !new_val)
     return;
 
-  std::lock_guard<std::mutex> lock(get_global_mutex());
   record_stacktrace_unlocked(new_val);
 
   std::string old_str, new_str;
@@ -527,7 +518,6 @@ void dump_iteration_info() {
   if (is_trace_disabled())
     return;
 
-  std::lock_guard<std::mutex> lock(get_global_mutex());
   if (iter_state.new_values.empty() && iter_state.replacements.empty())
     return;
 
@@ -545,7 +535,6 @@ void reset_trace_state() {
   if (is_trace_disabled())
     return;
 
-  std::lock_guard<std::mutex> lock(get_global_mutex());
   call_path.clear();
   get_trace_map().clear();
   iter_state.new_values.clear();
