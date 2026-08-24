@@ -72,7 +72,7 @@ cmake -GNinja \
     -DLLVM_CCACHE_BUILD=ON \
     -DLLVM_CCACHE_MAXSIZE=1G
 
-cmake --build "$HOST_BUILD_DIR" -j "$(nproc)" --target "${HOST_TARGETS[@]}"
+cmake --build "$HOST_BUILD_DIR" -j --target "${HOST_TARGETS[@]}"
 
 HOST_TBLGEN_ABS=$(realpath "$HOST_TBLGEN")
 DRIVER_DIR_ABS=$(realpath "$DRIVER_DIR")
@@ -105,7 +105,7 @@ emcmake cmake -GNinja \
     -DLLVM_CCACHE_BUILD=ON \
     -DLLVM_CCACHE_MAXSIZE=1G
 
-cmake --build "$WASM_BUILD_DIR" -j "$(nproc)" --target instcombine_driver
+cmake --build "$WASM_BUILD_DIR" -j --target instcombine_driver
 
 mkdir -p "$WEB_PUBLIC_DIR"
 cp "$WASM_BUILD_DIR/bin/instcombine_driver.js" "$WEB_PUBLIC_DIR/"

@@ -3,7 +3,6 @@ set -euo pipefail
 
 export CC=${CC:-clang}
 export CXX=${CXX:-clang++}
-export LD=${LD:-lld}
 
 LLVM_DIR=${LLVM_DIR:-thirdparty/llvm-project}
 BUILD_DIR=${BUILD_DIR:-build/llvm-rel}
@@ -24,9 +23,8 @@ cmake -GNinja \
     -DLLVM_INCLUDE_BENCHMARKS=OFF \
     -DLLVM_INCLUDE_EXAMPLES=OFF \
     -DCLANG_INCLUDE_TESTS=OFF \
-    -DLLVM_USE_LINKER=lld \
     -DLLVM_CCACHE_BUILD=ON \
     -DLLVM_CCACHE_MAXSIZE=1G \
     -DLLVM_PARALLEL_LINK_JOBS=${LLVM_PARALLEL_LINK_JOBS:-1}
 
-cmake --build "${BUILD_DIR}" -j "$(nproc)" --target ${BUILD_TARGETS}
+cmake --build "${BUILD_DIR}" -j --target ${BUILD_TARGETS}
