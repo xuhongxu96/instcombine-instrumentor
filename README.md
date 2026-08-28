@@ -1,3 +1,5 @@
+
+
 # instcombine-instrumentor
 
 **Try it:** <https://xuhongxu.com/instcombine-instrumentor/>
@@ -83,7 +85,7 @@ Publishing is driven by `.github/workflows/wasm-publish.yml`:
 
 - Monday 05 UTC — scan upstream LLVM for missing stable `llvmorg-X.Y.Z` tags
   and build the newest few.
-- Daily 06 UTC — build current LLVM main HEAD; the workflow keeps the last 7
+- Every 3 days 06 UTC — build current LLVM main HEAD; the workflow keeps the last 7
   snapshots and prunes older ones.
 - `workflow_dispatch` — manual build of any tag or commit SHA.
 
