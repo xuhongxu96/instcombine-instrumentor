@@ -5,20 +5,33 @@
 
   outputs = { self, nixpkgs }:
     let
-      system = "x86_64-linux";
-      pkgs = import nixpkgs { inherit system; };
+      supportedSystems = [
+        "x86_64-linux"
+        "aarch64-linux"
+        "aarch64-darwin"
+      ];
+
+      forAllSystems = f: nixpkgs.lib.genAttrs supportedSystems (system: f {
+        pkgs = import nixpkgs { inherit system; };
+        inherit system;
+      });
     in {
-      devShells.x86_64-linux.default = pkgs.mkShell {
-        buildInputs = with pkgs; [
-          uv
-          cmake
-          ccache
-          clang_21
-          ninja
-          python3
-          emscripten
-          nodejs_26
-        ];
-      };
+      devShells = forAllSystems ({ pkgs, ... }: {
+        default = pkgs.mkShell {
+          nativeBuildInputs = with pkgs; [
+            cmake
+            ccache
+            clang_21
+            ninja
+            emscripten
+          ];
+
+          buildInputs = with pkgs; [
+            uv
+            python3
+            nodejs_26
+          ];
+        };
+      });
     };
 }
