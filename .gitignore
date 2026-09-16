@@ -2,6 +2,7 @@ thirdparty/
 build/
 .ccache/
 .venv/
+.direnv/
 __pycache__/
 *.pyc
 llvm_fuzz_info.txt
