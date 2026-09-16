@@ -39,19 +39,30 @@ entirely.
 
 ## Quickstart (webapp / WebAssembly)
 
-Prereqs: native toolchain (clang/lld/cmake/ninja), activated
-[emsdk](https://emscripten.org/) `5.0.7`, Node 20+.
+> [!TIPS]
+> If you prefer using [Nix](https://nix.dev/install-nix), you can run `nix develop` and skip setting up emsdk.
+
+### Installing emsdk (Optional if using Nix)
+
 
 ```bash
 git clone --depth 1 https://github.com/emscripten-core/emsdk.git thirdparty/emsdk
 ./thirdparty/emsdk/emsdk install 5.0.7 && ./thirdparty/emsdk/emsdk activate 5.0.7
 source ./thirdparty/emsdk/emsdk_env.sh
+```
 
+### Build LLVM in WASM
+
+```bash
 bash clone_llvm.sh
 uv run python patch_llvm.py --llvm-repo thirdparty/llvm-project
 bash build_wasm.sh                # ~10-30 min cold; rebuilds host tblgen incrementally
 node wasm/test/smoke_wasm.mjs     # smoke
+```
 
+### Serve the Website
+
+```bash
 cd web && npm install && npm run dev
 # → http://localhost:5173/instcombine-instrumentor/
 ```
