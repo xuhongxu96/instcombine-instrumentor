@@ -39,7 +39,7 @@ entirely.
 
 ## Quickstart (webapp / WebAssembly)
 
-> [!TIPS]
+> [!TIP]
 > If you prefer using [Nix](https://nix.dev/install-nix), you can run `nix develop` and skip setting up emsdk.
 
 ### Installing emsdk (Optional if using Nix)
