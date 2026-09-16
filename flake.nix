@@ -16,6 +16,8 @@
           clang_21
           ninja
           python3
+          emscripten
+          nodejs_26
         ];
       };
     };
