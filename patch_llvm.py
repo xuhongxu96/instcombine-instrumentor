@@ -232,15 +232,11 @@ def patch_path_inc_for_older_llvm(llvm_repo: Path, llvm_version_major: int) -> N
     path_inc.write_text(content)
 
 
-def _is_pointer_return(
-    prefix_text: bytes, declarator: Node, allow_star_in_prefix: bool
-) -> bool:
+def _is_pointer_return(prefix_text: bytes, declarator: Node) -> bool:
     type_match = any(hint in prefix_text for hint in POINTER_TYPE_HINTS)
     if not type_match:
         return False
-    if declarator.type == "pointer_declarator":
-        return True
-    return bool(allow_star_in_prefix and b"*" in prefix_text)
+    return declarator.type == "pointer_declarator"
 
 
 def _extract_pointer_return_type(func_node: Node, content: bytes) -> bytes | None:
@@ -522,7 +518,6 @@ def _patch_file_generic(
     file_path: Path,
     instrumented_names: set[bytes],
     *,
-    allow_star_in_prefix: bool,
     is_inst_combining_cpp: bool,
 ) -> None:
     print(f"Patching {file_path}...")
@@ -549,9 +544,7 @@ def _patch_file_generic(
             continue
 
         prefix_text = content[func_node.start_byte : declarator.start_byte]
-        is_pointer = _is_pointer_return(
-            prefix_text, declarator, allow_star_in_prefix=allow_star_in_prefix
-        )
+        is_pointer = _is_pointer_return(prefix_text, declarator)
 
         # Call wraps apply in every body (so calls from utility/void/bool functions
         # still get attributed). Return wraps only in pointer-return functions.
@@ -620,7 +613,6 @@ def patch_inst_combine_file(file_path: Path, instrumented_names: set[bytes]) -> 
     _patch_file_generic(
         file_path,
         instrumented_names,
-        allow_star_in_prefix=False,
         is_inst_combining_cpp=file_path.name == "InstructionCombining.cpp",
     )
 
@@ -631,7 +623,6 @@ def patch_instruction_simplify_file(
     _patch_file_generic(
         file_path,
         instrumented_names,
-        allow_star_in_prefix=True,
         is_inst_combining_cpp=False,
     )
 
@@ -686,19 +677,19 @@ def _collect_instrumented_names(llvm_repo: Path) -> set[bytes]:
     functions matching `_is_pointer_return`. These become the call-site
     allowlist (alongside the ^Create[A-Z] regex)."""
     names: set[bytes] = set()
-    targets: list[tuple[Path, bool]] = []
+    targets: list[Path] = []
 
     inst_combine_dir = llvm_repo / "llvm/lib/Transforms/InstCombine"
     if inst_combine_dir.is_dir():
         for entry in sorted(inst_combine_dir.iterdir()):
             if entry.suffix in (".cpp", ".h") and entry.is_file():
-                targets.append((entry, False))
+                targets.append(entry)
 
     inst_simplify = llvm_repo / "llvm/lib/Analysis/InstructionSimplify.cpp"
     if inst_simplify.is_file():
-        targets.append((inst_simplify, True))
+        targets.append(inst_simplify)
 
-    for file_path, allow_star in targets:
+    for file_path in targets:
         content = file_path.read_bytes()
         root = parse_bytes(content)
         processed: set[int] = set()
@@ -714,9 +705,7 @@ def _collect_instrumented_names(llvm_repo: Path) -> set[bytes]:
             if declarator is None:
                 continue
             prefix_text = content[func_node.start_byte : declarator.start_byte]
-            if _is_pointer_return(
-                prefix_text, declarator, allow_star_in_prefix=allow_star
-            ):
+            if _is_pointer_return(prefix_text, declarator):
                 name = get_function_name(func_node)
                 if name:
                     names.add(name)
