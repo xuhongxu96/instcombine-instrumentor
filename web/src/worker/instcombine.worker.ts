@@ -62,11 +62,14 @@ async function loadFromSource(id: string, source: WasmSource): Promise<ActiveMod
   const revokeUrls: string[] = [];
   let jsImportUrl: string;
   let locateFile: ((path: string) => string) | undefined;
+  let addQuestion = false;
 
   if (source.kind === "bundled") {
     // Same-origin: dynamic import resolves the wasm sibling via the JS loader's own
     // import.meta.url, so no locateFile override is needed.
     jsImportUrl = source.jsUrl;
+    // https://github.com/vitejs/vite/issues/14850#issuecomment-1907275379
+    addQuestion = true;
   } else {
     // Cross-origin module imports require strict CORS + correct Content-Type from
     // the responding server. Sidestep that by fetching as blobs and importing the
@@ -95,7 +98,7 @@ async function loadFromSource(id: string, source: WasmSource): Promise<ActiveMod
     locateFile = () => wasmBlobUrl;
   }
 
-  const mod = await import(/* @vite-ignore */ jsImportUrl);
+  const mod = addQuestion ? await import(/* @vite-ignore */ `${jsImportUrl}?`) : await import(/* @vite-ignore */ jsImportUrl);
   const createModule = (mod.default ?? mod) as (cfg: object) => Promise<EmscriptenModule>;
   const stderr: string[] = [];
   const promise = createModule({

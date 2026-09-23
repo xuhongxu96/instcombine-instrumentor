@@ -124,23 +124,26 @@ async function fetchManifest(url: string): Promise<WasmManifest> {
   return (await res.json()) as WasmManifest;
 }
 
-// Fallback manifest used when `wasm/manifest.json` is missing (typically `npm run dev`
-// before the manifest builder has run). Points at whatever `build_wasm.sh` last copied
-// into `web/public/wasm/`.
-function fallbackManifest(): WasmManifest {
-  const now = new Date().toISOString();
-  const entry: WasmRelease = {
+function localBuildRelease(): WasmRelease {
+  return {
     tag: "(local build)",
     name: "(local build)",
     slug: "_local",
     kind: "tag",
-    publishedAt: now,
+    publishedAt: new Date().toISOString(),
     prerelease: false,
     bundled: true,
     jsAsset: "instcombine_driver.js",
     wasmAsset: "instcombine_driver.wasm",
-  };
-  return { generatedAt: now, defaultTag: entry.tag, releases: [entry] };
+  }
+}
+
+// Fallback manifest used when `wasm/manifest.json` is missing (typically `npm run dev`
+// before the manifest builder has run). Points at whatever `build_wasm.sh` last copied
+// into `web/public/wasm/`.
+function fallbackManifest(): WasmManifest {
+  const entry = localBuildRelease();
+  return { generatedAt: entry.publishedAt, defaultTag: entry.tag, releases: [entry] };
 }
 
 function pickInitialTag(manifest: WasmManifest, branch: string): string | null {
@@ -256,6 +259,9 @@ export function App() {
         } catch { /* falls through to local fallback */ }
       }
       if (cancelled) return;
+      if (import.meta.env.DEV && manifest) {
+        manifest.releases.push(localBuildRelease());
+      }
       const m = manifest ?? fallbackManifest();
       const initial = pickInitialTag(m, artifactBranch);
       setManifest(m);
