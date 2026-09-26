@@ -552,6 +552,11 @@ struct AtExitRegister {
   AtExitRegister() {
     if (is_trace_disabled())
       return;
+    // atexit handlers and static destructors run in reverse order of
+    // registration. Construct the (lazily created) trace map first so it is
+    // destroyed after the final flush, not before it; iter_state is defined
+    // above `reg` in this file and is thus constructed first already.
+    get_trace_map();
     std::atexit([]() { dump_iteration_info(); });
   }
 };
