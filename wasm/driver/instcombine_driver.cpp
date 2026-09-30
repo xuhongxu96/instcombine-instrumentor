@@ -17,6 +17,7 @@
 #include "llvm/Support/SourceMgr.h"
 #include "llvm/Support/raw_ostream.h"
 #include "llvm/Transforms/InstCombine/InstCombine.h"
+#include "llvm/Transforms/AggressiveInstCombine/AggressiveInstCombine.h"
 
 // OpenFlags::OF_Text was named F_Text before LLVM 7.
 #if LLVM_VERSION_MAJOR < 7
@@ -49,6 +50,7 @@ int main(int /*argc*/, char ** /*argv*/) {
 
   llvm::FunctionPassManager FPM;
   FPM.addPass(llvm::InstCombinePass());
+  FPM.addPass(llvm::AggressiveInstCombinePass());
 
   llvm::ModulePassManager MPM;
   MPM.addPass(llvm::createModuleToFunctionPassAdaptor(std::move(FPM)));
