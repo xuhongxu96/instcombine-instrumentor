@@ -18,7 +18,10 @@
             "type": "debugpy",
             "request": "launch",
             "program": "${workspaceFolder}/patch_llvm.py",
-            "console": "integratedTerminal"
+            "python": "${workspaceFolder}/.venv/bin/python",
+            "args": ["--llvm-repo", "thirdparty/llvm-project"],
+            "console": "integratedTerminal",
+            "cwd": "${workspaceFolder}"
         },
     ]
 }

@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this repo does
 
-This is *not* a normal codebase — it is a build harness that patches an upstream LLVM source tree and produces an instrumented `opt` binary that traces every new instruction and every RAUW performed by `InstCombine` / `InstructionSimplify` per pass iteration. The first-party sources are `patch_llvm.py` (the patcher), the C++ runtime under `runtime/`, the minimal wasm driver under `wasm/driver/`, the webapp under `web/`, plus a handful of shell scripts. Live webapp: <https://xuhongxu.com/instcombine-instrumentor/>.
+This is *not* a normal codebase — it is a build harness that patches an upstream LLVM source tree and produces an instrumented `opt` binary that traces every new instruction and every RAUW performed by `InstCombine` / `InstructionSimplify` / `ConstantFolding` per pass iteration. The first-party sources are `patch_llvm.py` (the patcher), the C++ runtime under `runtime/`, the minimal wasm driver under `wasm/driver/`, the webapp under `web/`, plus a handful of shell scripts. Live webapp: <https://xuhongxu.com/instcombine-instrumentor/>.
 
 The C++ runtime injected into LLVM lives in real source files at `runtime/fuzz_runtime.{h,cpp}` — edit those, not `patch_llvm.py`. The patcher reads them at module import via `Path.read_text()` and writes them into the LLVM tree at `llvm/include/llvm/IR/fuzz_runtime.h` and `llvm/lib/IR/fuzz_runtime.cpp`. The runtime is target-agnostic for the trace path — call-path frames come from a self-maintained `thread_local` stack populated by an RAII `CallScope` pushed *at each call site*, not from `llvm::sys::PrintStackTrace`, so native and wasm traces are byte-format-identical. The only remaining `#ifdef __EMSCRIPTEN__` guards `std::atexit` (unreliable under emscripten); an always-emitted `extern "C" dump_iteration_info_external` lets the wasm host flush the final iteration explicitly.
 
@@ -26,9 +26,9 @@ At runtime, `DISABLE_INSTCOMBINE_TRACE=1` makes the patched `opt` behave like st
 
 `patch_llvm.py` uses tree-sitter (not regex/sed) to walk C++ function definitions. Patching runs in **two passes**:
 
-1. **First pass (`_collect_instrumented_names`)** scans every `.cpp`/`.h` under `llvm/lib/Transforms/InstCombine/` plus `llvm/lib/Analysis/InstructionSimplify.cpp` and collects the bare names of every function whose return type "looks like a pointer to a Value/Instruction subclass" (see `POINTER_TYPE_HINTS` and `_is_pointer_return`). This name set is the **call-site allowlist** used by the second pass.
+1. **First pass (`_collect_instrumented_names`)** scans every `.cpp`/`.h` under `llvm/lib/Transforms/InstCombine/` plus `llvm/lib/Analysis/InstructionSimplify.cpp` and `llvm/lib/Analysis/ConstantFolding.cpp`, and collects the bare names of every function whose return type "looks like a pointer to a Value/Instruction subclass" (see `POINTER_TYPE_HINTS` and `_is_pointer_return`). ConstantFolding is scanned with an extra `Constant` hint, because its helpers return `Constant *` / `ConstantFP *`. This name set is the **call-site allowlist** used by the second pass.
 
-2. **Second pass** applies three distinct patchers to specific files in `thirdparty/llvm-project`:
+2. **Second pass** applies four distinct patchers to specific files in `thirdparty/llvm-project`:
 
    1. **`patch_value_cpp`** → `llvm/lib/IR/Value.cpp`. Finds `doRAUW` and inserts `__llvm_fuzz_record_replace(this, New)` at the top of its body. This is the single RAUW hook for the whole engine.
 
@@ -36,11 +36,13 @@ At runtime, `DISABLE_INSTCOMBINE_TRACE=1` makes the patched `opt` behave like st
 
    3. **`patch_instruction_simplify_file`** → `llvm/lib/Analysis/InstructionSimplify.cpp`. Same as #2, wrapping allowlisted calls and pointer returns (without the `InstructionCombining.cpp`-specific `run` method instrumentation).
 
+   4. **`patch_constant_folding_file`** → `llvm/lib/Analysis/ConstantFolding.cpp`. Same call-site and return wraps as #2, plus an extra `Constant` hint so `Constant *` / `ConstantFP *` returns are recorded. `std::pair<Constant *, Constant *>` (`ConstantFoldScalarFrexpCall`) is not a pointer declarator, so it stays unwrapped. The header is declarations only, so call sites in InstCombine are covered by the allowlist rather than by patching the header.
+
 Why two passes: call-site wraps need to know *which* callees are themselves instrumented, so the allowlist must be built before any source mutation.
 
 **Edit-conflict handling.** A call inside a `return` expression is covered by both a call wrap and a return wrap. `_body_edits` resolves this by treating the outermost wrappable unit as the edit target and recursively splicing inner wraps into its replacement text (`_render_wrap_unit` / `_render_with_inner_wraps`). So `return foo(bar(x));` becomes `return __llvm_fuzz_record(__llvm_fuzz_call(foo(__llvm_fuzz_call(bar(x)))));` from a single non-overlapping edit. Idempotency is enforced by `_is_inside_fuzz_wrap`: a call already inside `__llvm_fuzz_call`/`__llvm_fuzz_record` is skipped.
 
-All three patchers prepend `#include "llvm/IR/fuzz_runtime.h"` if not already present. After patching, one `CMakeLists.txt` is updated:
+All four patchers prepend `#include "llvm/IR/fuzz_runtime.h"` if not already present. After patching, one `CMakeLists.txt` is updated:
 - `llvm/lib/IR/CMakeLists.txt` → adds `fuzz_runtime.cpp` to `LLVMCore`. The injection (`update_core_cmake`) is a regex that matches both `add_llvm_component_library(LLVMCore` (LLVM ≥ 10) and the older `add_llvm_library(LLVMCore` spelling, and raises if neither is found.
 
 (Earlier revisions also forced `-O0 -g` on InstructionSimplify and the InstCombine library so `PrintStackTrace`/`llvm-symbolizer` could resolve frames accurately; those overrides were removed once the trace path switched to compile-time `__FILE__`/`__LINE__` captured at each call site.)

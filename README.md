@@ -5,8 +5,8 @@
 ![demo](demo.png)
 
 Build an instrumented LLVM `opt` that records every new instruction and every
-RAUW replacement performed by InstCombine / InstructionSimplify on each pass
-iteration.
+RAUW replacement performed by InstCombine / InstructionSimplify /
+ConstantFolding on each pass iteration.
 
 Ships in two flavors:
 
