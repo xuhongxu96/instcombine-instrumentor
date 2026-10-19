@@ -770,11 +770,12 @@ def _collect_instrumented_names(llvm_repo: Path) -> set[bytes]:
             if entry.suffix in (".cpp", ".h") and entry.is_file():
                 targets.append(entry)
 
+    aggressive_inst_combine_targets = []
     aggressive_inst_combine_dir = llvm_repo / "llvm/lib/Transforms/AggressiveInstCombine"
     if aggressive_inst_combine_dir.is_dir():
         for entry in sorted(aggressive_inst_combine_dir.iterdir()):
             if entry.suffix in (".cpp", ".h") and entry.is_file():
-                targets.append(entry)
+                aggressive_inst_combine_targets.append(entry)
 
     inst_simplify = llvm_repo / "llvm/lib/Analysis/InstructionSimplify.cpp"
     if inst_simplify.is_file():
@@ -800,6 +801,17 @@ def _collect_instrumented_names(llvm_repo: Path) -> set[bytes]:
                 name = get_function_name(func_node)
                 if name:
                     names.add(name)
+    for file_path in aggressive_inst_combine_targets:
+        content = file_path.read_bytes()
+        root = parse_bytes(content)
+        q = Query(CPP, '''
+        (function_definition declarator: (function_declarator declarator: (identifier) @ident))
+        ''')
+        captures = q.captures(root)
+        if not captures:
+            continue
+        for n in captures['ident']:
+            names.add(content[n.start_byte : n.end_byte])
     return names
 
 
