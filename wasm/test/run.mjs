@@ -51,18 +51,10 @@ function runOnce(ir) {
 
     Module.ccall("dump_iteration_info_external", null, [], []);
 
-    let trace = "";
-    let traceJson = "";
-    let outputIr = "";
-    try {
-        trace = Module.FS.readFile("/work/llvm_fuzz_info.txt", { encoding: "utf8" });
-    } catch { }
-    try {
-        traceJson = Module.FS.readFile("/work/llvm_fuzz_info.json", { encoding: "utf8" });
-    } catch { }
-    try {
-        outputIr = Module.FS.readFile("/work/output.ll", { encoding: "utf8" });
-    } catch { }
+    let trace = Module.FS.readFile("/work/llvm_fuzz_info.txt", { encoding: "utf8" });
+    let traceJson = Module.FS.readFile("/work/llvm_fuzz_info.json", { encoding: "utf8" });
+    let outputIr = Module.FS.readFile("/work/output.ll", { encoding: "utf8" });
+
     return { trace, traceJson, outputIr };
 }
 
