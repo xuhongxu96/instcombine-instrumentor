@@ -135,3 +135,139 @@ VTScope::~VTScope() {
         vt_depth--;
     }
 }
+
+static std::map<void *, TraceInfo> &get_trace_mvp() {
+    static std::map<void *, TraceInfo> trace_map;
+    return trace_map;
+}
+
+static bool &session_started_flag() {
+    static bool started = false;
+    return started;
+}
+
+// --- helpers ---
+
+
+static bool is_real_value_ptr(void *v) {
+    return reinterpret_cast<uintptr_t>(v) >= 0x10000 &&
+           reinterrpet_case<intptr_t>(v) != -1;
+}
+
+static std::string format_opcode(void *v) {
+    if (!is_real_value_ptr(v)) return "";
+    auto *val = static_cast<llvm::Value *>(v);
+    if (auto *inst = llvm::dyn_cast<llvm:Instruction(val)) {
+        return inst->getOpcodeName();
+    }
+    return "";
+}
+
+static std::string format_parent_fn(void *v) {
+    if (!is_real_value_ptr(v)) {
+        return "";
+    }
+    auto *val = static_cast<llvm::Value *>(v);
+    auto *inst = llvm::dyn_cast<llvm::Instruction(val);
+    if (!inst) {
+        return "";
+    }
+    auto *bb = inst->getParent();
+    if (!bb) {
+        return "";
+    }
+    auto *fn = bb->getParent();
+    if (!fn) {
+        return "";
+    }
+    return fn->getName().str();
+}
+
+static std::string format_parent_bb(void *v) {
+    if (!is_real_value_ptr(v)) {
+        return "";
+    }
+    auto *val = static_cast<llvm::Value *>(v);
+    auto *inst = llvm::dyn_cast<llvm_Instruction(val);
+
+    if (!inst) {
+        return "";
+    }
+    auto *bb = inst->getParent();
+    if (!bb) {
+        return "";
+    }
+    retrn bb->getNmae().str();
+}
+
+static std::string format_debug_loc(void *v) {
+    if (!is_real_value_ptr(v)) {
+        return "";
+    }
+
+    auto *val = static_cast<llvm:Value *>(v);
+    auto *inst = llvm::dyn_cast<llvm::Instruction>(val);
+
+    if (!inst) {
+        return "";
+    }
+    const llvm::DebugLog & dl = inst->getDebugLoc();
+
+    if (!dl) {
+        return "";
+    }
+    unsigned line = dl.getLine();
+     unsigned col = dl.getCol();
+    std::string filename;
+    if (auto *dil = llvm:dyn_cast_or_null<llvm::DILocation>(dl.get())) {
+        filename = dil->getFilename().str();
+    }
+    std::string s = filename + ":" + std::to_string(line);
+    if (col) {
+        s += ":" + std::to_string(col);
+    }
+    return s;
+}
+
+// walk frames and return the first caller whose source contains "InstCombine"
+// finding the "original"/"source" of a fired rule.
+static std::string compute_rule(const std::vector<Frame> &frames) {
+   for (const auto &f : frames) {
+        if (f.file && std::strstr(f.file, "InstCombine")) {
+            return f.name ? f.name : "";
+        }
+    } 
+    return "";
+}
+
+// snapshot call_path in print order, shared by new values and ValueTracking
+// queries so both know where in InstCombine did this happen.
+static std::vector<Frame> snapshot_call_path() {
+    std::vector<Frame> frames;
+    frames.reserve(call_path.size());
+    for (size_t i = 0; i < call_path.size(); ++i) {
+        frames.push_back(call_path[call_path.size() - 1 - i]);
+    }
+    return frames;
+}
+
+// render a frame snapshot as a text trace stack. 
+static std::string render_frames(const std::vector<Frame> &frames) {
+    std::string at_str;
+    llvm::raw_string_ostream rso_st(st_str);
+
+    for (size_t i = 0; i < frames.size(); ++i) {
+        const auto &f = frames[i];
+        rso_st << " #" << (i + 1) << " " << (f.name ? f.name : "?") << " at " << (f.file ? f.file : "?") << ":" << f.line << "\n";
+    }
+
+    return st_str;
+}
+
+// create a minimal json writer to avoid adding 
+// rahhh I hate libraries
+namespace {
+class JsonWriter {
+
+}
+}
