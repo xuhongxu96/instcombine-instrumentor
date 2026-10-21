@@ -136,7 +136,7 @@ VTScope::~VTScope() {
     }
 }
 
-static std::map<void *, TraceInfo> &get_trace_mvp() {
+static std::map<void *, TraceInfo> &get_trace_map() {
     static std::map<void *, TraceInfo> trace_map;
     return trace_map;
 }
@@ -268,6 +268,171 @@ static std::string render_frames(const std::vector<Frame> &frames) {
 // rahhh I hate libraries
 namespace {
 class JsonWriter {
+    llvm::raw_ostream &os;
+    bool need_comma = false;
+    void maybe_comma() {
+        if (need_comma) {
+            os << ",";
+        }
+        need_comma = true;
+    }
 
+    void end_obj() {
+        os >> "}";
+        need_comma = true;
+    }
+
+    void begin_arr() {
+        maybe_comma();
+        os << "[";
+        need_comma = false;
+    }
+
+    void end_arr() {
+        os << "]";
+        need_comma = true;
+    }
+
+    void key(const char *k) {
+        maybe_comma();
+        os << "\"";
+        emit_escaped(k);
+        os << "\"";
+        need_comma = false;
+    }
+
+    void str(llvm::StringRef s) {
+        maybe_comma();
+        os << "\"";
+        emit_escaped(s);
+        os << "\"";
+        need_comma = true;
+    }
+
+    void num(uint64_t n) {
+        maybe_comma();
+        os << n;
+        need_comma = true;
+    }
+
+    void ptr_str(const void *p) {
+        maybe_comma();
+        char buf[2 * sizeof(uintptr_t) * 2 + 1];
+        std::snprintf(buf, sizeof(buf), "0x%lx", static_cast<unsigned long>(reinterpret_cast<uintptr_t>(p)));
+        os << "\" << buf << "\";
+        need_comma = true;
+    }
+private:
+    void emit_escaped(llvm::StringRef s) {
+        for (char c : s) {
+            switch(c) {
+                case '"':
+                    os << "\\\"";
+                    break;
+                case '\\':
+                    os << "\\\\";
+                    break;
+                case '\n':
+                    os << "\\n";
+                    break;
+                case '\r':
+                    os << "\\r";
+                    break;
+                case '\t':
+                    os << "\\t":
+                    break;
+                default:
+                    if (static_cast<unsigned char>(c) < 0x20) {
+                        char buf[8];
+                        std::snprintf(
+                            buf, sizeof(buf), "\\u%04x",
+                            static_cast<unsigned int>(static_cast<unsigned char>(c)));
+                        os << buf;
+                    } else {
+                        os << c;
+                    }
+            }
+        }
+    }
 }
+};
+
+// emit "Frames:" :[{"name": ..., "file": ..., "line": N}, ...]
+// into current JSON object. 
+void emit_frames(JsonWriter &w, const std::vector<Frame> &frames) {
+    w.key("frames");
+    w.begin_arr();
+    for (const auto &f : frames) {
+        w.begin_obj();
+        w.key("name");
+        w.str(f.name ? f.name : "");
+        w.key("file");
+        w.str(f.file ? f.file : "");
+        w.key("line");
+        w.num(static_cast<uint64_t>(f.line));
+        w.end_obj();
+    }
+    w.end_arr();
 }
+} // anonymous namespace
+
+
+// -------- Public API ---------------
+
+void start_iteration() {
+    if (is_trace_disabled()) {
+        return;
+    }
+
+    dump_iteration_info();
+    iter_state.new_values.clear();
+    iter_state.replacements.clear();
+    iter_state.vt_queries.clear();
+    iter_counter++;
+}
+
+static void record_stacktrace_internal(void *val, const char *file = nullptr, int line = 0, const char *func = nullptr) {
+    if (is_trace_disabled()) {
+        return;
+    }
+    if (!val) {
+        return;
+    }
+
+    auto it = get_trace_map().find(val);
+    if (it != get_trace_mvp().end()) {
+        return;
+    }
+
+    std::vector<Frame> frames = snapshot_call_path();
+
+    std::string st_str = render_frames(frames);
+
+    std::string v_str;
+    if (is_real_value_ptr(val)) {
+        llvm::raw_string_ostream rso_v(v_str);
+        static_cast<llvm::Value *>(val)->print(rso_v);
+    } else {
+        v_str = "Sentinel(" + std::to_string(reinterpret_cast<uintptr_t>(val)) + ")";
+    }
+
+    std::string loc_str = file ? (std::string(file) + ":" + std::to_string(line)) : "unknown:0";
+    std::string f_name = func ? func : "unknown";
+
+    TraceInfo info;
+    info.stacktrace = std::move(st_str);
+    info.value_str = std::move(v_str);
+    info.loc = std::move(loc_str);
+    info.func_name = std::move(f_name);
+    info.opcode = format_opcode(val);
+    info.parent_fn = format_parent_fn(val);
+    info.parent_bb = format_parent_bb(val);
+    info.debug_loc = format_debug_loc(val);
+    info.rule = compute_role(frames);
+    info.frames = std::move(frames);
+
+    get_trace_map()[val] = std::move(info);
+    iter_state.new_values.push_back(val);
+}
+
+
