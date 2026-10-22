@@ -1,5 +1,6 @@
 thirdparty/
 build/
+.cache/
 .ccache/
 .venv/
 .direnv/

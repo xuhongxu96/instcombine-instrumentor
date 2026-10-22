@@ -16,8 +16,8 @@
 #include "llvm/Support/FileSystem.h"
 #include "llvm/Support/SourceMgr.h"
 #include "llvm/Support/raw_ostream.h"
-#include "llvm/Transforms/InstCombine/InstCombine.h"
 #include "llvm/Transforms/AggressiveInstCombine/AggressiveInstCombine.h"
+#include "llvm/Transforms/InstCombine/InstCombine.h"
 
 // OpenFlags::OF_Text was named F_Text before LLVM 7.
 #if LLVM_VERSION_MAJOR < 7
@@ -25,6 +25,14 @@
 #else
 #define LLVM_DRIVER_OF_TEXT llvm::sys::fs::OF_Text
 #endif
+
+template <typename PB = llvm::PassBuilder, typename... Args>
+PB makePassBuilder(llvm::LLVMContext &Ctx, Args &&...As) {
+  if constexpr (std::is_constructible_v<PB, llvm::LLVMContext &, Args...>)
+    return PB(Ctx, std::forward<Args>(As)...);
+  else
+    return PB(std::forward<Args>(As)...);
+}
 
 int main(int /*argc*/, char ** /*argv*/) {
   llvm::LLVMContext Ctx;
@@ -41,7 +49,8 @@ int main(int /*argc*/, char ** /*argv*/) {
   llvm::CGSCCAnalysisManager CGAM;
   llvm::ModuleAnalysisManager MAM;
 
-  llvm::PassBuilder PB;
+  llvm::PassBuilder PB = makePassBuilder(Ctx);
+
   PB.registerModuleAnalyses(MAM);
   PB.registerCGSCCAnalyses(CGAM);
   PB.registerFunctionAnalyses(FAM);
