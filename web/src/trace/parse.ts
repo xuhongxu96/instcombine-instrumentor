@@ -1,4 +1,4 @@
-import type { Iteration } from "./types";
+import type { Iteration, NewValue, RawIteration } from "./types";
 import { computeRule } from "./rule";
 
 // One JSON object per line. Defensive: a corrupted trailing line (e.g. crash
@@ -11,12 +11,29 @@ export function parseTraceJsonl(raw: string): Iteration[] {
     const line = lines[i].trim();
     if (!line) continue;
     try {
-      const obj = JSON.parse(line) as Iteration;
+      const obj = JSON.parse(line) as RawIteration;
       if (typeof obj === "object" && obj !== null && Array.isArray(obj.new_values) && Array.isArray(obj.replacements)) {
-        // The runtime's `rule` ignores frame #0 (the producing function); derive
-        // it here from frame #0 + the call_path so the UI shows the real rule.
-        for (const v of obj.new_values) v.rule = computeRule(v);
-        out.push(obj);
+        const iteration: Iteration = {
+          iteration: obj.iteration,
+          new_values: obj.new_values.map((v) => {
+            const value: NewValue = {
+              ...v,
+              opcode: v.opcode ?? "",
+              rule: "",
+            };
+
+            // Derive the rule from the producing location and caller frames.
+            value.rule = computeRule(value);
+            return value;
+          }),
+          replacements: obj.replacements.map((r) => ({
+            ...r,
+            old_opcode: r.old_opcode ?? "",
+            new_opcode: r.new_opcode ?? "",
+          })),
+        };
+
+        out.push(iteration);
       }
     } catch (e) {
       console.warn(`parseTraceJsonl: skipping malformed line ${i + 1}:`, e);

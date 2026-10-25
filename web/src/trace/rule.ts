@@ -1,6 +1,9 @@
 import type { NewValue } from "./types";
 import { splitLoc } from "./githubLink";
 
+// Rule attribution needs only source metadata, not derived UI fields.
+type RuleInput = Pick<NewValue, "loc" | "func_name" | "frames">;
+
 // A source file lives under lib/Transforms/InstCombine iff its path contains
 // "InstCombine" — matching the runtime's own strstr() heuristic.
 const INSTCOMBINE_HINT = "InstCombine";
@@ -18,7 +21,7 @@ function isInstCombineFile(file: string | undefined | null): boolean {
 // created directly inside a visit*/fold* function whose body has no further
 // InstCombine call site on the stack gets no rule (or a less-specific outer
 // one). Recompute here with frame #0 as the innermost candidate.
-export function computeRule(v: NewValue): string {
+export function computeRule(v: RuleInput): string {
   const loc = v.loc ? splitLoc(v.loc) : null;
   if (isInstCombineFile(loc?.file)) return v.func_name || "";
   for (const f of v.frames ?? []) {

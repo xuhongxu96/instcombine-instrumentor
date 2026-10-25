@@ -1,5 +1,6 @@
-// Schema mirroring runtime/fuzz_runtime.cpp's dump_json. Pointers come over as
-// "0x..." strings so they can be used directly as DOM ids / anchor targets.
+// Raw* types describe JSON records received from the runtime, where derived fields
+// may be absent. The other types describe normalized records for the UI.
+// Pointers come over as "0x..." strings so they can be used directly as DOM ids / anchor targets.
 
 export interface Frame {
   name: string;
@@ -33,4 +34,24 @@ export interface Iteration {
   iteration: number;
   new_values: NewValue[];
   replacements: Replacement[];
+}
+
+// Records received from the runtime.
+// Derived fields may be absent in newer traces.
+export interface RawNewValue
+  extends Omit<NewValue, "opcode" | "rule"> {
+  opcode?: string;
+  rule?: string;
+}
+
+export interface RawReplacement
+  extends Omit<Replacement, "old_opcode" | "new_opcode"> {
+  old_opcode?: string;
+  new_opcode?: string;
+}
+
+export interface RawIteration {
+  iteration: number;
+  new_values: RawNewValue[];
+  replacements: RawReplacement[];
 }
