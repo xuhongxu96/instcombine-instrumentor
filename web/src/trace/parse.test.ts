@@ -44,13 +44,13 @@ describe("parseTraceJsonl", () => {
     }]);
   });
 
-  it("normalizes records without derived fields", () => {
+  it("derives missing opcodes from IR while normalizing records", () => {
     const raw = rawIteration();
 
     expect(parseTraceJsonl(JSON.stringify(raw))).toEqual([{
       ...raw,
-      new_values: [{ ...raw.new_values[0], opcode: "", rule: "visitAdd" }],
-      replacements: [{ ...raw.replacements[0], old_opcode: "", new_opcode: "" }],
+      new_values: [{ ...raw.new_values[0], opcode: "add", rule: "visitAdd" }],
+      replacements: [{ ...raw.replacements[0], old_opcode: "add", new_opcode: "" }],
     }]);
   });
 
@@ -59,6 +59,50 @@ describe("parseTraceJsonl", () => {
     raw.new_values[0].opcode = "";
     raw.replacements[0].old_opcode = "";
     raw.replacements[0].new_opcode = "";
+    raw.replacements[0].new_ir = "%b = sub i32 %x, 1";
+
+    const [parsed] = parseTraceJsonl(JSON.stringify(raw));
+
+    expect(parsed.new_values[0].opcode).toBe("");
+    expect(parsed.replacements[0].old_opcode).toBe("");
+    expect(parsed.replacements[0].new_opcode).toBe("");
+  });
+
+  it("preserves supplied opcodes that the web extractor does not recognize", () => {
+    const raw = rawIteration();
+    raw.new_values[0].ir = "%a = future_opcode i32 %x";
+    raw.new_values[0].opcode = "future_opcode";
+    raw.replacements[0].old_ir = raw.new_values[0].ir;
+    raw.replacements[0].old_opcode = "future_opcode";
+    raw.replacements[0].new_ir = "%b = future_opcode i32 %y";
+    raw.replacements[0].new_opcode = "future_opcode";
+
+    const [parsed] = parseTraceJsonl(JSON.stringify(raw));
+
+    expect(parsed.new_values[0].opcode).toBe("future_opcode");
+    expect(parsed.replacements[0].old_opcode).toBe("future_opcode");
+    expect(parsed.replacements[0].new_opcode).toBe("future_opcode");
+  });
+
+  it("derives replacement opcodes from their own IR snapshots, not pointer lookups", () => {
+    const raw = rawIteration();
+    raw.replacements[0].old_ir = "%a = sub i32 %x, 1";
+    raw.replacements[0].new_ir = "%b = mul i32 %x, 2";
+
+    const [parsed] = parseTraceJsonl(JSON.stringify(raw));
+
+    // The old pointer matches a value record; the new pointer has no record.
+    // Both sides must use the IR captured on the replacement itself.
+    expect(parsed.new_values[0].opcode).toBe("add");
+    expect(parsed.replacements[0].old_opcode).toBe("sub");
+    expect(parsed.replacements[0].new_opcode).toBe("mul");
+  });
+
+  it("uses empty opcodes for non-instructions and unrecognized IR", () => {
+    const raw = rawIteration();
+    raw.new_values[0].ir = "i32 %x";
+    raw.replacements[0].old_ir = "ptr getelementptr (i8, ptr @g, i64 1)";
+    raw.replacements[0].new_ir = "%b = future_opcode i32 %x";
 
     const [parsed] = parseTraceJsonl(JSON.stringify(raw));
 
