@@ -1,4 +1,5 @@
 import type { Iteration, NewValue, RawIteration } from "./types";
+import { deriveOpcode } from "./opcode";
 import { computeRule } from "./rule";
 
 // One JSON object per line. Defensive: a corrupted trailing line (e.g. crash
@@ -18,7 +19,7 @@ export function parseTraceJsonl(raw: string): Iteration[] {
           new_values: obj.new_values.map((v) => {
             const value: NewValue = {
               ...v,
-              opcode: v.opcode ?? "",
+              opcode: v.opcode ?? deriveOpcode(v.ir),
               rule: "",
             };
 
@@ -28,8 +29,8 @@ export function parseTraceJsonl(raw: string): Iteration[] {
           }),
           replacements: obj.replacements.map((r) => ({
             ...r,
-            old_opcode: r.old_opcode ?? "",
-            new_opcode: r.new_opcode ?? "",
+            old_opcode: r.old_opcode ?? deriveOpcode(r.old_ir),
+            new_opcode: r.new_opcode ?? deriveOpcode(r.new_ir),
           })),
         };
 
