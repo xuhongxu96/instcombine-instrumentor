@@ -5,6 +5,7 @@ import { CopyButton, OutputIrPane } from "./components/OutputIrPane";
 import { TracePanel, type TraceViewMode } from "./components/TracePanel";
 import { useColorScheme, type ColorSchemePref } from "./components/useColorScheme";
 import { parseTraceJsonl } from "./trace/parse";
+import { renderTraceText } from "./trace/renderText";
 import { githubSourceFromRelease } from "./trace/githubLink";
 import { compressIr, decompressIr, isCompressionSupported } from "./share/irCompress";
 import {
@@ -36,7 +37,7 @@ type WasmState =
   | { kind: "running"; tag: string }
   | { kind: "loadError"; tag: string; message: string }
   | { kind: "runError"; tag: string; message: string }
-  | { kind: "done"; tag: string; bytes: number };
+  | { kind: "done"; tag: string };
 
 function getBaseUrl(): string {
   const base = (import.meta as ImportMeta & { env?: { BASE_URL?: string } }).env?.BASE_URL ?? "/";
@@ -169,7 +170,7 @@ export function App() {
   if (initialIrRef.current === null) initialIrRef.current = readInitialIr();
   const [ir, setIr] = useState(initialIrRef.current.value);
   const [isDecodingShared, setIsDecodingShared] = useState(initialIrRef.current.isDecoding);
-  const [trace, setTrace] = useState("");
+  const [legacyTrace, setLegacyTrace] = useState("");
   const [traceJson, setTraceJson] = useState("");
   const [outputIr, setOutputIr] = useState("");
   const [runError, setRunError] = useState("");
@@ -189,6 +190,8 @@ export function App() {
   const shouldAutoRunRef = useRef(initialIrRef.current?.fromShare ?? false);
 
   const iterations = useMemo(() => parseTraceJsonl(traceJson), [traceJson]);
+  const trace = useMemo(() => renderTraceText(iterations, legacyTrace), [iterations, legacyTrace]);
+  const traceBytes = useMemo(() => new TextEncoder().encode(trace).byteLength, [trace]);
 
   const releaseByTag = useMemo(() => {
     const map = new Map<string, WasmRelease>();
@@ -304,7 +307,7 @@ export function App() {
       if (msg.type === "done") {
         const stderr: string = msg.stderr ?? "";
         const exitCode: number = msg.exitCode ?? 0;
-        setTrace(msg.trace ?? "");
+        setLegacyTrace(msg.trace ?? "");
         setTraceJson(msg.traceJson ?? "");
         setOutputIr(msg.outputIr ?? "");
         // The driver exits non-zero on failure (e.g. IR parse error); surface
@@ -321,7 +324,7 @@ export function App() {
           setRunError("");
           setState((prev) =>
             "tag" in prev
-              ? { kind: "done", tag: prev.tag, bytes: (msg.trace ?? "").length }
+              ? { kind: "done", tag: prev.tag }
               : prev,
           );
         }
@@ -397,7 +400,7 @@ export function App() {
     if (!workerRef.current) return;
     if (state.kind !== "ready" && state.kind !== "done" && state.kind !== "runError") return;
     setState({ kind: "running", tag: state.tag });
-    setTrace("");
+    setLegacyTrace("");
     setTraceJson("");
     setOutputIr("");
     setRunError("");
@@ -433,7 +436,7 @@ export function App() {
       case "loadingVersion":  return `loading ${state.tag}…`;
       case "ready":           return "ready";
       case "running":         return "running InstCombine…";
-      case "done":            return `trace ${state.bytes.toLocaleString()} bytes`;
+      case "done":            return `trace ${traceBytes.toLocaleString()} bytes`;
       case "loadError":       return `load error: ${state.message}`;
       case "runError":        return `run error: ${state.message}`;
     }
