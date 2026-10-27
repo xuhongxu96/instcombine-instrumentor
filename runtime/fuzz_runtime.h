@@ -39,9 +39,14 @@ private:
 //   result - the answer, so "...00011" for knownbits, "true","false" for
 //            predicates
 //   v0     - value the question is about
-//   v1     - second value for binary queries, otherwise nullptr
+//   v1     - second value for binary queries, nullptr if unary query
+//   file   - file location of ValueTracking site.
+//            (same format as __llvm_fuzz_record)
+//   line   - line location of ValueTracking site
+//   func   - function of ValueTracking site
 void record_vt_query(const char *query, const char *result,
-                     const llvm::Value *v0, const llvm::Value *v1 = nullptr);
+                     const llvm::Value *v0, const llvm::Value *v1,
+                     const char *file, int line, const char *func);
 
 template <typename T>
 T *record_stacktrace_with_loc(T *val, const char *file, int line,
@@ -52,6 +57,11 @@ T *record_stacktrace_with_loc(T *val, const char *file, int line,
   return val;
 }
 } // namespace llvm_fuzz
+
+#define __llvm_fuzz_record_vt(query, result, v0, v1)                           \
+  ::llvm_fuzz::record_vt_query((query), (result), (v0), (v1), __FILE__,        \
+                               __LINE__, __PRETTY_FUNCTION__)
+
 #define __llvm_fuzz_record(val)                                                \
   ::llvm_fuzz::record_stacktrace_with_loc((val), __FILE__, __LINE__,           \
                                           __PRETTY_FUNCTION__)

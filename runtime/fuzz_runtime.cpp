@@ -61,6 +61,9 @@ struct VTQuery {
   std::string query;
   std::string result;
 
+  std::string loc;
+  std::string func_name;
+
   std::vector<VTOperand> operands;
 
   std::string rule;
@@ -503,7 +506,8 @@ void record_replacement(void *old_val, void *new_val) {
 // hook in ValueTracking.cpp while the call's VTScope is still alive
 // so an outermost query sees vt_depth == 1 here
 void record_vt_query(const char *query, const char *result,
-                     const llvm::Value *v0, const llvm::Value *v1) {
+                     const llvm::Value *v0, const llvm::Value *v1,
+                     const char *file, int line, const char *func) {
   if (is_trace_disabled()) {
     return;
   }
@@ -525,6 +529,8 @@ void record_vt_query(const char *query, const char *result,
   VTQuery q;
   q.query = query ? query : "";
   q.result = result ? result : "";
+  q.loc = file ? (std::string(file) + ":" + std::to_string(line)) : "unknown:0";
+  q.func_name = func ? func : "unknown";
 
   // print each operand now before InstCombine rewrites/erases it
   // trace shows IR as it was when the question was asked
@@ -595,7 +601,7 @@ static void dump_text(bool first_dump) {
   }
   // ValueTracking queries
   // each entry is:
-  //   QUERY <query>(<ptr> (<ir>)[, <ptr> (<ir>)]) = <result>
+  //   QUERY <query>(<ptr> (<ir>)[, <ptr> (<ir>)]) = <result> at <func> (<loc>):
   //    [rule=<visit*/fold* that asked>]        <- omitted if no rule found
   //    #1 <caller> at <file>:<line>            <- call path, as for VALUEs
   //    #2 ...
@@ -608,7 +614,8 @@ static void dump_text(bool first_dump) {
         out << ", ";
       out << q.operands[i].ptr << " (" << q.operands[i].ir << ")";
     }
-    out << ") = " << q.result << "\n";
+    out << ") = " << q.result << " at " << q.func_name << " (" << q.loc
+        << "):\n";
     if (!q.rule.empty())
       out << " [rule=" << q.rule << "]\n";
     out << render_frames(q.frames) << "\n";
@@ -681,7 +688,9 @@ static void dump_json(bool first_dump) {
 
   // ValueTracking queries
   //   "vt_queries": [
-  //     { "query": "haveNoCommonBitsSet", "result": "true",
+  //     { "query": "haveNoCommonBitsSet", "loc": "ValueTracking.cpp:234",
+  //       "func_name": "bool llvm::computeKnownBits(...)",
+  //       "result": "true",
   //       "operands": [{ "ptr": "0x55...", "ir": "  %a = and i32 %x, 15" },
   //                    { "ptr": "0x55...", "ir": "i32 16" }],
   //       "rule": "llvm::...visitAdd(...)",
@@ -694,6 +703,10 @@ static void dump_json(bool first_dump) {
     w.begin_obj();
     w.key("query");
     w.str(q.query);
+    w.key("loc");
+    w.str(q.loc);
+    w.key("func_name");
+    w.str(q.func_name);
     w.key("result");
     w.str(q.result);
     w.key("operands");
