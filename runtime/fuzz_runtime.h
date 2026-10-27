@@ -35,10 +35,11 @@ private:
 };
 
 // record one valuetracking query and its answer for a given iteration
-// query - name of the valuetracking function
-// result - the answer, so "...00011" for knownbits, "true","false" for
-// predicates v0 - value the question is about v1 - second value for binary
-// queries, otherwise nullptr
+//   query  - name of the valuetracking function
+//   result - the answer, so "...00011" for knownbits, "true","false" for
+//            predicates
+//   v0     - value the question is about
+//   v1     - second value for binary queries, otherwise nullptr
 void record_vt_query(const char *query, const char *result,
                      const llvm::Value *v0, const llvm::Value *v1 = nullptr);
 
@@ -55,6 +56,10 @@ T *record_stacktrace_with_loc(T *val, const char *file, int line,
   ::llvm_fuzz::record_stacktrace_with_loc((val), __FILE__, __LINE__,           \
                                           __PRETTY_FUNCTION__)
 
+// GCC statement expression instead of a lambda: in C++17 lambdas can't capture
+// structured bindings, and InstCombine has many `for (auto [k, v] : ...)` loops
+// whose bodies contain wrappable calls. The block scope doesn't "capture" —
+// `expr` references outer names natively — so structured bindings work.
 #define __llvm_fuzz_call(expr)                                                 \
   __extension__({                                                              \
     ::llvm_fuzz::CallScope __llvm_fuzz_cs(__FILE__, __LINE__,                  \

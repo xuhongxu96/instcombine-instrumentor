@@ -10,7 +10,8 @@
 #include "llvm/Support/FileSystem.h"
 #include "llvm/Support/raw_ostream.h"
 
-// OpenFlags were renamed from F_ to OF_ in llvm 7
+// OpenFlags were renamed F_* -> OF_* in LLVM 7; the F_* aliases were dropped
+// in LLVM 13. Pick the right symbol for the version we're compiling against.
 #if LLVM_VERSION_MAJOR < 7
 #define LLVM_FUZZ_OF_NONE llvm::sys::fs::F_None
 #define LLVM_FUZZ_OF_APPEND llvm::sys::fs::F_Append
@@ -80,7 +81,7 @@ struct IterationState {
 };
 
 struct TraceInfo {
-  std::string stacktrace;
+  std::string stacktrace; // pre-rendered for text dump
   std::string value_str;
   std::string loc;
   std::string func_name;
@@ -89,7 +90,7 @@ struct TraceInfo {
   std::string parent_bb;
   std::string debug_loc;
   std::string rule;
-  std::vector<Frame> frames;
+  std::vector<Frame> frames; // structured copy for JSONL emission
 };
 static IterationState iter_state;
 static uint32_t iter_counter = 0;
@@ -141,12 +142,15 @@ static std::map<void *, TraceInfo> &get_trace_map() {
   return trace_map;
 }
 
+// Lazily emit "=== SESSION START ===" on the first dump, so the trace lands
+// in whatever CWD the host process is in at write time (matters under
+// emscripten where the JS host chdirs after module init).
 static bool &session_started_flag() {
   static bool started = false;
   return started;
 }
 
-// --- helpers ---
+// ---- Helpers --------------------------------------------------------------
 
 static bool is_real_value_ptr(void *v) {
   return reinterpret_cast<uintptr_t>(v) >= 0x10000 &&
@@ -229,8 +233,9 @@ static std::string format_debug_loc(void *v) {
   return s;
 }
 
-// walk frames and return the first caller whose source contains "InstCombine"
-// finding the "original"/"source" of a fired rule.
+// Walk frames (already in print order, innermost caller first) and return the
+// first caller name whose source file contains "InstCombine" — that's the
+// visit* / fold* rule that ultimately fired.
 static std::string compute_rule(const std::vector<Frame> &frames) {
   for (const auto &f : frames) {
     if (f.file && std::strstr(f.file, "InstCombine")) {
@@ -265,8 +270,7 @@ static std::string render_frames(const std::vector<Frame> &frames) {
   return st_str;
 }
 
-// create a minimal json writer to avoid adding
-// rahhh I hate libraries
+// Minimal JSON writer over raw_ostream — no nlohmann/json dependency.
 namespace {
 class JsonWriter {
   llvm::raw_ostream &os;
@@ -325,7 +329,7 @@ public:
 
   void ptr_str(const void *p) {
     maybe_comma();
-    char buf[2 * sizeof(uintptr_t) * 2 + 1];
+    char buf[2 + sizeof(uintptr_t) * 2 + 1];
     std::snprintf(buf, sizeof(buf), "0x%lx",
                   static_cast<unsigned long>(reinterpret_cast<uintptr_t>(p)));
     os << "\"" << buf << "\"";
@@ -383,9 +387,9 @@ void emit_frames(JsonWriter &w, const std::vector<Frame> &frames) {
   }
   w.end_arr();
 }
-} // namespace
+} // anonymous namespace
 
-// -------- Public API ---------------
+// ---- Public API -----------------------------------------------------------
 
 void start_iteration() {
   if (is_trace_disabled()) {
@@ -414,10 +418,13 @@ static void record_stacktrace_internal(void *val, const char *file = nullptr,
     return;
   }
 
+  // Snapshot frames in print order: innermost caller (top of stack) as #1.
   std::vector<Frame> frames = snapshot_call_path();
 
+  // Pre-render the text stacktrace.
   std::string st_str = render_frames(frames);
 
+  // Capture value string representation
   std::string v_str;
   if (is_real_value_ptr(val)) {
     llvm::raw_string_ostream rso_v(v_str);
@@ -542,7 +549,8 @@ void record_vt_query(const char *query, const char *result,
   iter_state.vt_queries.push_back(std::move(q));
 }
 
-// dumpers
+// ---- Dumpers --------------------------------------------------------------
+
 static void dump_text(bool first_dump) {
   std::error_code EC;
   auto open_flags = first_dump ? LLVM_FUZZ_OF_NONE : LLVM_FUZZ_OF_APPEND;
@@ -745,6 +753,10 @@ void reset_trace_state() {
 }
 
 #ifndef __EMSCRIPTEN__
+// Native only: register a final flush at process exit so the last iteration
+// isn't dropped. Under emscripten the JS host calls
+// dump_iteration_info_external explicitly after callMain — std::atexit isn't
+// reliable there.
 struct AtExitRegister {
   AtExitRegister() {
     if (is_trace_disabled())
