@@ -73,8 +73,8 @@ if [ -f "$VISITADD_SOURCE" ]; then
     fi
 fi
 
-# JSONL sidecar must exist, parse as one object per line, and carry the
-# enriched fields (opcode/parent_fn/rule) on at least one new value.
+# JSONL must preserve event snapshots and source context, while leaving
+# opcode/rule derivation and stack formatting to the web consumer.
 if [ ! -s "$TRACE_JSON" ]; then
     echo "FAIL: $TRACE_JSON missing or empty"
     exit 1
@@ -83,8 +83,10 @@ python3 - "$TRACE_JSON" <<'PY' || exit 1
 import json, sys
 path = sys.argv[1]
 n_iter = 0
-saw_opcode = False
-saw_rule = False
+n_values = 0
+n_replacements = 0
+saw_parent_fn = False
+saw_visit_add = False
 with open(path) as fh:
     for lineno, line in enumerate(fh, 1):
         line = line.strip()
@@ -94,16 +96,35 @@ with open(path) as fh:
         assert isinstance(obj, dict), f"line {lineno} not an object"
         for k in ("iteration", "new_values", "replacements"):
             assert k in obj, f"line {lineno} missing key {k!r}"
+        assert isinstance(obj["iteration"], int), f"line {lineno} has invalid iteration"
+        assert isinstance(obj["new_values"], list), f"line {lineno} has invalid new_values"
+        assert isinstance(obj["replacements"], list), f"line {lineno} has invalid replacements"
         for v in obj["new_values"]:
-            for k in ("ptr", "ir", "opcode", "parent_fn", "rule", "frames"):
-                assert k in v, f"line {lineno} value missing key {k!r}"
-            if v["opcode"]: saw_opcode = True
-            if v["rule"]: saw_rule = True
+            for k in ("ptr", "ir", "parent_fn", "parent_bb", "debug_loc", "loc", "func_name"):
+                assert isinstance(v.get(k), str), f"line {lineno} value missing/invalid {k!r}"
+            for k in ("opcode", "rule", "stacktrace"):
+                assert k not in v, f"line {lineno} value still emits derived field {k!r}"
+            assert isinstance(v.get("frames"), list), f"line {lineno} value missing/invalid frames"
+            for frame in v["frames"]:
+                assert isinstance(frame.get("name"), str), f"line {lineno} frame has invalid name"
+                assert isinstance(frame.get("file"), str), f"line {lineno} frame has invalid file"
+                assert isinstance(frame.get("line"), int), f"line {lineno} frame has invalid line"
+            saw_parent_fn |= bool(v["parent_fn"])
+            saw_visit_add |= "visitAdd" in v["func_name"] or any("visitAdd" in f["name"] for f in v["frames"])
+            n_values += 1
+        for r in obj["replacements"]:
+            for k in ("old_ptr", "new_ptr", "old_ir", "new_ir"):
+                assert isinstance(r.get(k), str), f"line {lineno} replacement missing/invalid {k!r}"
+            for k in ("old_opcode", "new_opcode"):
+                assert k not in r, f"line {lineno} replacement still emits derived field {k!r}"
+            n_replacements += 1
         n_iter += 1
 assert n_iter > 0, "no iterations in JSONL"
-assert saw_opcode, "no new value had opcode populated"
-assert saw_rule, "no new value had rule populated"
-print(f"JSONL sidecar OK: {n_iter} iteration(s); opcode + rule populated")
+assert n_values > 0, "no recorded values in JSONL"
+assert n_replacements > 0, "no replacements in JSONL"
+assert saw_parent_fn, "no value retained parent function context"
+assert saw_visit_add, "no value retained visitAdd source attribution"
+print(f"JSONL OK: {n_iter} iteration(s), {n_values} values, {n_replacements} replacements; retained context, no derived fields")
 PY
 
 echo "Smoke test passed; trace size: $(wc -c < "$TRACE_FILE") bytes"
