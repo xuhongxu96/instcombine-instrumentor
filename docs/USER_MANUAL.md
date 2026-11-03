@@ -67,7 +67,9 @@ The trace pane has two view modes — toggle via the `text` / `structured` segme
 
 #### 6.1 Text mode
 
-Renders `llvm_fuzz_info.txt` verbatim with custom syntax highlighting for `=== ITERATION …` markers, pointer-arrow replacements, stack frames, and source locations. A **wrap** toggle controls long-line wrapping; **copy** copies the full trace.
+Renders readable text from the same processed JSONL records as Structured mode, with custom syntax highlighting for `=== ITERATION …` markers, pointer-arrow replacements, stack frames, and source locations. Opcode and rule labels are derived in the webapp when needed. A **wrap** toggle controls long-line wrapping; **copy** copies the full displayed trace. The byte count measures that text in UTF-8.
+
+Current native and wasm runtimes write only `llvm_fuzz_info.json` (one JSON object per iteration); they no longer create `llvm_fuzz_info.txt`. Text mode can still display the original text trace from older bundles when structured records are unavailable.
 
 #### 6.2 Structured mode
 

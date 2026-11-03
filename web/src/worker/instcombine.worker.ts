@@ -3,7 +3,7 @@
 // The main thread chooses which wasm bundle to use via a `loadVersion` message
 // (bundled = same-origin Pages asset, remote = fetched from a GitHub Release).
 // Switching versions tears down the previous module and revokes any blob URLs
-// it allocated. The runtime's trace file lives in MEMFS at /work/llvm_fuzz_info.txt;
+// it allocated. The runtime's JSONL trace lives in MEMFS at /work/llvm_fuzz_info.json;
 // we chdir there so the runtime's relative open() succeeds.
 
 import type { WasmSource } from "../wasm/manifest";
@@ -163,13 +163,14 @@ self.onmessage = async (e: MessageEvent<IncomingMessage>) => {
       } catch { /* runtime not in a flushable state */ }
 
       let trace = "";
+      // Compatibility fallback for old bundles; current runtimes emit JSONL only.
       try {
         trace = Module.FS.readFile("/work/llvm_fuzz_info.txt", { encoding: "utf8" });
-      } catch { /* no trace file — either no changes, or driver bailed */ }
+      } catch { /* current runtimes do not emit a text file */ }
       let traceJson = "";
       try {
         traceJson = Module.FS.readFile("/work/llvm_fuzz_info.json", { encoding: "utf8" });
-      } catch { /* older wasm bundle won't emit the JSONL sidecar */ }
+      } catch { /* older bundle, no trace events, or driver bailed */ }
       let outputIr = "";
       try {
         outputIr = Module.FS.readFile("/work/output.ll", { encoding: "utf8" });
