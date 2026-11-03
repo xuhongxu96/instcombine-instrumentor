@@ -22,7 +22,6 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
-#include <cstring>
 #include <map>
 #include <string>
 #include <vector>
@@ -44,8 +43,6 @@ struct Replacement {
   void *new_ptr;
   std::string old_str;
   std::string new_str;
-  std::string old_opcode;
-  std::string new_opcode;
 };
 
 // capture everything once so we don't need to deref later.
@@ -84,16 +81,13 @@ struct IterationState {
 };
 
 struct TraceInfo {
-  std::string stacktrace; // pre-rendered for text dump
   std::string value_str;
   std::string loc;
   std::string func_name;
-  std::string opcode;
   std::string parent_fn;
   std::string parent_bb;
   std::string debug_loc;
-  std::string rule;
-  std::vector<Frame> frames; // structured copy for JSONL emission
+  std::vector<Frame> frames;
 };
 static IterationState iter_state;
 static uint32_t iter_counter = 0;
@@ -158,16 +152,6 @@ static bool &session_started_flag() {
 static bool is_real_value_ptr(void *v) {
   return reinterpret_cast<uintptr_t>(v) >= 0x10000 &&
          reinterpret_cast<intptr_t>(v) != -1;
-}
-
-static std::string format_opcode(void *v) {
-  if (!is_real_value_ptr(v))
-    return "";
-  auto *val = static_cast<llvm::Value *>(v);
-  if (auto *inst = llvm::dyn_cast<llvm::Instruction>(val)) {
-    return inst->getOpcodeName();
-  }
-  return "";
 }
 
 static std::string format_parent_fn(void *v) {
@@ -424,9 +408,6 @@ static void record_stacktrace_internal(void *val, const char *file = nullptr,
   // Snapshot frames in print order: innermost caller (top of stack) as #1.
   std::vector<Frame> frames = snapshot_call_path();
 
-  // Pre-render the text stacktrace.
-  std::string st_str = render_frames(frames);
-
   // Capture value string representation
   std::string v_str;
   if (is_real_value_ptr(val)) {
@@ -442,15 +423,12 @@ static void record_stacktrace_internal(void *val, const char *file = nullptr,
   std::string f_name = func ? func : "unknown";
 
   TraceInfo info;
-  info.stacktrace = std::move(st_str);
   info.value_str = std::move(v_str);
   info.loc = std::move(loc_str);
   info.func_name = std::move(f_name);
-  info.opcode = format_opcode(val);
   info.parent_fn = format_parent_fn(val);
   info.parent_bb = format_parent_bb(val);
   info.debug_loc = format_debug_loc(val);
-  info.rule = compute_rule(frames);
   info.frames = std::move(frames);
 
   get_trace_map()[val] = std::move(info);
@@ -497,8 +475,6 @@ void record_replacement(void *old_val, void *new_val) {
       new_val,
       std::move(old_str),
       std::move(new_str),
-      format_opcode(old_val),
-      format_opcode(new_val),
   });
 }
 
@@ -575,21 +551,21 @@ static void dump_text(bool first_dump) {
       const TraceInfo &info = it->second;
       out << "VALUE " << v << " (" << info.value_str << ") at "
           << info.func_name << " (" << info.loc << "):\n";
-      if (!info.opcode.empty() || !info.parent_fn.empty() ||
-          !info.debug_loc.empty() || !info.rule.empty()) {
+      if (!info.parent_fn.empty() || !info.debug_loc.empty()) {
         out << " ";
-        if (!info.opcode.empty())
-          out << "[opcode=" << info.opcode << "] ";
         if (!info.parent_fn.empty())
           out << "[fn=" << info.parent_fn
               << (info.parent_bb.empty() ? "" : ("/" + info.parent_bb)) << "] ";
-        if (!info.rule.empty())
-          out << "[rule=" << info.rule << "] ";
         if (!info.debug_loc.empty())
           out << "[dbg=" << info.debug_loc << "] ";
         out << "\n";
       }
-      out << info.stacktrace << "\n";
+      for (size_t i = 0; i < info.frames.size(); ++i) {
+        const auto &f = info.frames[i];
+        out << " #" << (i + 1) << " " << (f.name ? f.name : "?") << " at "
+            << (f.file ? f.file : "?") << ":" << f.line << "\n";
+      }
+      out << "\n";
     } else {
       out << "VALUE " << v << " (No trace info)\n";
     }
@@ -646,16 +622,12 @@ static void dump_json(bool first_dump) {
       const TraceInfo &info = it->second;
       w.key("ir");
       w.str(info.value_str);
-      w.key("opcode");
-      w.str(info.opcode);
       w.key("parent_fn");
       w.str(info.parent_fn);
       w.key("parent_bb");
       w.str(info.parent_bb);
       w.key("debug_loc");
       w.str(info.debug_loc);
-      w.key("rule");
-      w.str(info.rule);
       w.key("loc");
       w.str(info.loc);
       w.key("func_name");
@@ -678,10 +650,6 @@ static void dump_json(bool first_dump) {
     w.str(r.old_str);
     w.key("new_ir");
     w.str(r.new_str);
-    w.key("old_opcode");
-    w.str(r.old_opcode);
-    w.key("new_opcode");
-    w.str(r.new_opcode);
     w.end_obj();
   }
   w.end_arr();
