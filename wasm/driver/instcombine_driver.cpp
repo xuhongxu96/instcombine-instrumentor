@@ -2,7 +2,7 @@
 //
 // Designed to be invoked from emscripten as `Module.callMain([])` after the
 // caller has placed the IR text at /work/input.ll. The instrumented LLVM
-// runtime writes its trace to /work/llvm_fuzz_info.txt (relative path, picked
+// runtime writes JSONL to /work/llvm_fuzz_info.json (relative path, picked
 // up from CWD which the JS worker chdirs to /work before calling main).
 
 #include "llvm/Analysis/CGSCCPassManager.h"

@@ -22,6 +22,7 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <map>
 #include <string>
 #include <vector>
@@ -139,9 +140,9 @@ static std::map<void *, TraceInfo> &get_trace_map() {
   return trace_map;
 }
 
-// Lazily emit "=== SESSION START ===" on the first dump, so the trace lands
-// in whatever CWD the host process is in at write time (matters under
-// emscripten where the JS host chdirs after module init).
+// Truncate JSONL on the first nonempty dump, then append subsequent iterations.
+// Open at dump time so the trace lands in the host's current working directory
+// (the emscripten host chdirs after module initialization).
 static bool &session_started_flag() {
   static bool started = false;
   return started;
@@ -241,20 +242,6 @@ static std::vector<Frame> snapshot_call_path() {
     frames.push_back(call_path[call_path.size() - 1 - i]);
   }
   return frames;
-}
-
-// render a frame snapshot as a text trace stack.
-static std::string render_frames(const std::vector<Frame> &frames) {
-  std::string st_str;
-  {
-    llvm::raw_string_ostream rso_st(st_str);
-    for (size_t i = 0; i < frames.size(); ++i) {
-      const auto &f = frames[i];
-      rso_st << " #" << (i + 1) << " " << (f.name ? f.name : "?") << " at "
-             << (f.file ? f.file : "?") << ":" << f.line << "\n";
-    }
-  }
-  return st_str;
 }
 
 // Minimal JSON writer over raw_ostream — no nlohmann/json dependency.
@@ -531,73 +518,7 @@ void record_vt_query(const char *query, const char *result,
   iter_state.vt_queries.push_back(std::move(q));
 }
 
-// ---- Dumpers --------------------------------------------------------------
-
-static void dump_text(bool first_dump) {
-  std::error_code EC;
-  auto open_flags = first_dump ? LLVM_FUZZ_OF_NONE : LLVM_FUZZ_OF_APPEND;
-  llvm::raw_fd_ostream out("llvm_fuzz_info.txt", EC, open_flags);
-  if (EC) {
-    return;
-  }
-  if (first_dump) {
-    out << "=== SESSION START ===\n";
-  }
-  out << "=== ITERATION " << iter_counter << " START ===\n";
-  out << "\nNEW INSTRUCTIONS IN THIS ITERATION:\n";
-  for (void *v : iter_state.new_values) {
-    auto it = get_trace_map().find(v);
-    if (it != get_trace_map().end()) {
-      const TraceInfo &info = it->second;
-      out << "VALUE " << v << " (" << info.value_str << ") at "
-          << info.func_name << " (" << info.loc << "):\n";
-      if (!info.parent_fn.empty() || !info.debug_loc.empty()) {
-        out << " ";
-        if (!info.parent_fn.empty())
-          out << "[fn=" << info.parent_fn
-              << (info.parent_bb.empty() ? "" : ("/" + info.parent_bb)) << "] ";
-        if (!info.debug_loc.empty())
-          out << "[dbg=" << info.debug_loc << "] ";
-        out << "\n";
-      }
-      for (size_t i = 0; i < info.frames.size(); ++i) {
-        const auto &f = info.frames[i];
-        out << " #" << (i + 1) << " " << (f.name ? f.name : "?") << " at "
-            << (f.file ? f.file : "?") << ":" << f.line << "\n";
-      }
-      out << "\n";
-    } else {
-      out << "VALUE " << v << " (No trace info)\n";
-    }
-  }
-  out << "REPLACEMENTS IN THIS ITERATION:\n";
-  for (auto const &r : iter_state.replacements) {
-    out << r.old_ptr << " (" << r.old_str << ") -> " << r.new_ptr << " ("
-        << r.new_str << ")\n";
-  }
-  // ValueTracking queries
-  // each entry is:
-  //   QUERY <query>(<ptr> (<ir>)[, <ptr> (<ir>)]) = <result> at <func> (<loc>):
-  //    [rule=<visit*/fold* that asked>]        <- omitted if no rule found
-  //    #1 <caller> at <file>:<line>            <- call path, as for VALUEs
-  //    #2 ...
-  //   <blank line>
-  out << "\nVALUETRACKING QUERIES IN THIS ITERATION:\n";
-  for (auto const &q : iter_state.vt_queries) {
-    out << "QUERY " << q.query << "(";
-    for (size_t i = 0; i < q.operands.size(); ++i) {
-      if (i)
-        out << ", ";
-      out << q.operands[i].ptr << " (" << q.operands[i].ir << ")";
-    }
-    out << ") = " << q.result << " at " << q.func_name << " (" << q.loc
-        << "):\n";
-    if (!q.rule.empty())
-      out << " [rule=" << q.rule << "]\n";
-    out << render_frames(q.frames) << "\n";
-  }
-  out << "=== ITERATION END ===\n";
-}
+// ---- JSONL output ---------------------------------------------------------
 
 static void dump_json(bool first_dump) {
   std::error_code EC;
@@ -707,7 +628,6 @@ void dump_iteration_info() {
     return;
 
   bool first_dump = !session_started_flag();
-  dump_text(first_dump);
   dump_json(first_dump);
   if (first_dump)
     session_started_flag() = true;
