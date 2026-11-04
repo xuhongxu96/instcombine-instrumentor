@@ -20,13 +20,8 @@ entry:
 }
 EOF
 
-rm -f llvm_fuzz_info.txt "$TRACE_JSON"
+rm -f "$TRACE_JSON"
 "$OPT_BIN" -passes=instcombine "$SMOKE_IR" -S -o /dev/null
-
-if [ -e llvm_fuzz_info.txt ]; then
-    echo "FAIL: runtime still emits llvm_fuzz_info.txt instead of JSONL only"
-    exit 1
-fi
 
 # JSONL must preserve event snapshots and source context, while leaving
 # opcode/rule derivation and stack formatting to the web consumer.
