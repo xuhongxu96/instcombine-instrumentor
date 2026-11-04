@@ -31,9 +31,10 @@ bash smoke_test.sh     # builds a tiny IR through opt and checks the trace
 ```
 
 The patched binary writes `./llvm_fuzz_info.json` into the current working
-directory, with one JSON object per recorded iteration. New builds no longer
-create `llvm_fuzz_info.txt`. The webapp renders both Text and Structured views
-from the same JSONL data; it retains a text fallback for older wasm bundles.
+directory, with one JSON object per recorded iteration. This JSONL file is the
+sole runtime trace output. The webapp renders both Text and Structured views
+from the same JSONL data. Builds with ValueTracking support also record queries
+and their answers; these appear in the Text view.
 
 Set `DISABLE_INSTCOMBINE_TRACE=1` at runtime to suppress instrumentation
 entirely.

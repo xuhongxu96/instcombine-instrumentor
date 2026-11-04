@@ -1,6 +1,7 @@
 // Usage: node wasm/test/run.mjs [path/to/instcombine_driver.js]
 
-import { readFileSync, writeFileSync, readdirSync, existsSync } from "node:fs";
+import { readFileSync, readdirSync, existsSync } from "node:fs";
+import assert from "node:assert/strict";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { dirname, resolve } from "node:path";
 
@@ -30,6 +31,7 @@ try {
 Module.FS.chdir("/work");
 
 function runOnce(ir) {
+    stderrChunks.length = 0;
     try {
         Module.ccall("reset_trace_state_external", null, [], []);
     } catch (e) {
@@ -38,7 +40,7 @@ function runOnce(ir) {
     }
 
     Module.FS.writeFile("/work/input.ll", ir);
-    for (const f of ["/work/llvm_fuzz_info.txt", "/work/llvm_fuzz_info.json", "/work/output.ll"]) {
+    for (const f of ["/work/llvm_fuzz_info.json", "/work/output.ll"]) {
         try { Module.FS.unlink(f); } catch { /* not present yet — fine */ }
     }
 
@@ -51,11 +53,87 @@ function runOnce(ir) {
 
     Module.ccall("dump_iteration_info_external", null, [], []);
 
-    let trace = Module.FS.readFile("/work/llvm_fuzz_info.txt", { encoding: "utf8" });
-    let traceJson = Module.FS.readFile("/work/llvm_fuzz_info.json", { encoding: "utf8" });
-    let outputIr = Module.FS.readFile("/work/output.ll", { encoding: "utf8" });
+    const traceJson = Module.FS.readFile("/work/llvm_fuzz_info.json", { encoding: "utf8" });
+    const outputIr = Module.FS.readFile("/work/output.ll", { encoding: "utf8" });
 
-    return { trace, traceJson, outputIr };
+    return { traceJson, outputIr };
+}
+
+function validateFrames(frames, context) {
+    assert.ok(Array.isArray(frames), `${context} has invalid frames`);
+    for (const frame of frames) {
+        assert.equal(typeof frame.name, "string", `${context} frame has invalid name`);
+        assert.equal(typeof frame.file, "string", `${context} frame has invalid file`);
+        assert.ok(Number.isInteger(frame.line), `${context} frame has invalid line`);
+    }
+}
+
+// Check runtime snapshots before source-line normalization changes their types.
+function validateTraceJsonl(raw) {
+    const iterations = raw.split("\n").filter((line) => line.trim()).map((line) => JSON.parse(line));
+    assert.ok(iterations.length > 0, "no iterations in JSONL");
+    assert.equal(iterations[0].iteration, 1, "reset did not restart the iteration counter");
+    let previousIteration = 0;
+    for (const iteration of iterations) {
+        const context = `iteration ${iteration.iteration}`;
+        assert.ok(Number.isInteger(iteration.iteration) && iteration.iteration > previousIteration, `${context} has invalid iteration order`);
+        previousIteration = iteration.iteration;
+        for (const key of ["new_values", "replacements", "vt_queries"]) {
+            assert.ok(Array.isArray(iteration[key]), `${context} has invalid ${key}`);
+        }
+        for (const value of iteration.new_values) {
+            for (const key of ["ptr", "ir", "parent_fn", "parent_bb", "debug_loc", "loc", "func_name"]) {
+                assert.equal(typeof value[key], "string", `${context} value has invalid ${key}`);
+            }
+            for (const key of ["opcode", "rule", "stacktrace"]) {
+                assert.ok(!(key in value), `${context} value still emits derived field ${key}`);
+            }
+            validateFrames(value.frames, context);
+        }
+        for (const replacement of iteration.replacements) {
+            for (const key of ["old_ptr", "new_ptr", "old_ir", "new_ir"]) {
+                assert.equal(typeof replacement[key], "string", `${context} replacement has invalid ${key}`);
+            }
+            for (const key of ["old_opcode", "new_opcode"]) {
+                assert.ok(!(key in replacement), `${context} replacement still emits derived field ${key}`);
+            }
+        }
+        for (const query of iteration.vt_queries) {
+            for (const key of ["query", "result", "loc", "func_name"]) {
+                assert.equal(typeof query[key], "string", `${context} query has invalid ${key}`);
+            }
+            assert.ok(Array.isArray(query.operands), `${context} query has invalid operands`);
+            for (const operand of query.operands) {
+                assert.equal(typeof operand.ptr, "string", `${context} query operand has invalid ptr`);
+                assert.equal(typeof operand.ir, "string", `${context} query operand has invalid ir`);
+            }
+            validateFrames(query.frames, context);
+        }
+    }
+    return iterations;
+}
+
+function validateSmokeTrace(iterations, outputIr) {
+    const values = iterations.flatMap((iteration) => iteration.new_values);
+    assert.ok(values.length > 0, "no recorded values in smoke trace");
+    assert.ok(iterations.some((iteration) => iteration.replacements.length > 0), "no replacements in smoke trace");
+    assert.ok(values.some((value) => value.parent_fn), "no value retained parent function context");
+    assert.ok(values.some((value) => value.func_name.includes("visitAdd") || value.frames.some((frame) => frame.name.includes("visitAdd"))), "no visitAdd source attribution");
+    assert.ok(values.some((value) => value.func_name.includes("ConstantFoldBinaryOpOperands") || value.frames.some((frame) => frame.name.includes("ConstantFoldBinaryOpOperands"))), "no ConstantFolding record");
+    assert.ok(outputIr.includes("define ") && outputIr.includes("@f("), "output.ll does not contain the smoke function");
+
+    const source = resolve(__dirname, "../../thirdparty/llvm-project/llvm/lib/Transforms/InstCombine/InstCombineAddSub.cpp");
+    const signatureLine = existsSync(source)
+        ? readFileSync(source, "utf8").split("\n").findIndex((line) => /Instruction\s*\*\s*InstCombiner(?:Impl)?::visitAdd\b/.test(line)) + 1
+        : 0;
+    if (signatureLine > 0) {
+        const frames = values.flatMap((value) => value.frames)
+            .filter((frame) => frame.name.includes("visitAdd") && frame.file.endsWith("InstCombineAddSub.cpp"));
+        assert.ok(frames.length > 0, "no visitAdd caller frames in JSONL");
+        assert.ok(frames.every((frame) => frame.line !== signatureLine), "visitAdd frame points to signature instead of call site");
+    } else {
+        console.warn("WARN: visitAdd source/signature unavailable — skipping call-site assertion");
+    }
 }
 
 function replaceLineNumWithLineStr(obj) {
@@ -93,11 +171,7 @@ readdirSync(resolve(__dirname, "input")).forEach((f) => {
     const path = resolve(__dirname, "input", f);
     const ir = readFileSync(path, "utf8");
     console.log(`=== Running smoke test ${f} ===`);
-    const { trace, traceJson, outputIr } = runOnce(ir);
-    if (!trace) {
-        console.error("FAIL: no trace produced");
-        process.exit(1);
-    }
+    const { traceJson, outputIr } = runOnce(ir);
     if (!traceJson) {
         console.error("FAIL: no JSONL produced");
         process.exit(1);
@@ -106,6 +180,8 @@ readdirSync(resolve(__dirname, "input")).forEach((f) => {
         console.error("FAIL: no output IR produced");
         process.exit(1);
     }
+    const iterations = validateTraceJsonl(traceJson);
+    if (f === "smoke.ll") validateSmokeTrace(iterations, outputIr);
 
     let expected = {};
 
@@ -167,5 +243,12 @@ readdirSync(resolve(__dirname, "input")).forEach((f) => {
         }
     }
 
-    console.log(`Smoke test ${f} OK — trace ${trace.length} bytes, JSONL ${traceJson.length} bytes, output.ll ${outputIr.length} bytes`);
+    console.log(`Smoke test ${f} OK — JSONL ${Buffer.byteLength(traceJson)} bytes, output.ll ${Buffer.byteLength(outputIr)} bytes`);
 });
+
+const smokeIr = readFileSync(resolve(__dirname, "input/smoke.ll"), "utf8");
+for (let i = 0; i < 25; i++) {
+    const { traceJson, outputIr } = runOnce(smokeIr);
+    validateSmokeTrace(validateTraceJsonl(traceJson), outputIr);
+}
+console.log("Repeated-run reset OK: 25/25 runs retained JSONL records, source context, and output IR");
