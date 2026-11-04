@@ -31,6 +31,18 @@ export function renderTraceText(iterations: readonly Iteration[], legacyTrace = 
     for (const replacement of iteration.replacements) {
       lines.push(`${replacement.old_ptr} (${replacement.old_ir}) -> ${replacement.new_ptr} (${replacement.new_ir})`);
     }
+    if (iteration.vt_queries.length > 0) {
+      lines.push("", "VALUETRACKING QUERIES IN THIS ITERATION:");
+      for (const query of iteration.vt_queries) {
+        const operands = query.operands.map((operand) => `${operand.ptr} (${operand.ir})`).join(", ");
+        lines.push(`QUERY ${query.query}(${operands}) = ${query.result} at ${query.func_name || "unknown"} (${query.loc || "unknown:0"}):`);
+        if (query.rule) lines.push(` [rule=${query.rule}]`);
+        for (const [index, frame] of (query.frames ?? []).entries()) {
+          lines.push(` #${index + 1} ${frame.name || "?"} at ${frame.file || "?"}:${frame.line}`);
+        }
+        lines.push("");
+      }
+    }
     lines.push("=== ITERATION END ===");
   }
   return lines.join("\n") + "\n";

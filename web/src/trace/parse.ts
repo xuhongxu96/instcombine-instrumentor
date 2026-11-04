@@ -32,6 +32,10 @@ export function parseTraceJsonl(raw: string): Iteration[] {
             old_opcode: r.old_opcode ?? deriveOpcode(r.old_ir),
             new_opcode: r.new_opcode ?? deriveOpcode(r.new_ir),
           })),
+          vt_queries: (obj.vt_queries ?? []).map((q) => ({
+            ...q,
+            rule: computeRule(q),
+          })),
         };
 
         out.push(iteration);

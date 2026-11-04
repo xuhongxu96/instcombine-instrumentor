@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { parseTraceJsonl } from "./parse";
-import type { RawIteration } from "./types";
+import type { RawIteration, RawVTQuery } from "./types";
 
 function rawIteration(): RawIteration {
   return {
@@ -24,6 +24,24 @@ function rawIteration(): RawIteration {
   };
 }
 
+function rawQuery(): RawVTQuery {
+  return {
+    query: "haveNoCommonBitsSet",
+    result: "true",
+    loc: "llvm/lib/Analysis/ValueTracking.cpp:50",
+    func_name: "haveNoCommonBitsSet",
+    operands: [
+      { ptr: "0x1", ir: "  %a = and i32 %x, 15" },
+      { ptr: "0x2", ir: "i32 16" },
+    ],
+    rule: "outdated runtime rule",
+    frames: [
+      { name: "visitAdd", file: "llvm/lib/Transforms/InstCombine/InstCombineAddSub.cpp", line: 100 },
+      { name: "run", file: "llvm/lib/Transforms/InstCombine/InstructionCombining.cpp", line: 200 },
+    ],
+  };
+}
+
 afterEach(() => {
   vi.restoreAllMocks();
 });
@@ -41,6 +59,7 @@ describe("parseTraceJsonl", () => {
     expect(parsed).toEqual([{
       ...raw,
       new_values: [{ ...raw.new_values[0], rule: "visitAdd" }],
+      vt_queries: [],
     }]);
   });
 
@@ -51,6 +70,7 @@ describe("parseTraceJsonl", () => {
       ...raw,
       new_values: [{ ...raw.new_values[0], opcode: "add", rule: "visitAdd" }],
       replacements: [{ ...raw.replacements[0], old_opcode: "add", new_opcode: "" }],
+      vt_queries: [],
     }]);
   });
 
@@ -124,6 +144,63 @@ describe("parseTraceJsonl", () => {
     const [parsed] = parseTraceJsonl(JSON.stringify(raw));
 
     expect(parsed.new_values[0].rule).toBe("visitAdd");
+  });
+
+  it("preserves ValueTracking queries and their own operand snapshots in order", () => {
+    const raw = rawIteration();
+    const first = rawQuery();
+    const second = { ...rawQuery(), query: "computeKnownBits", result: "Zero: 0xFFFFFFF0, One: 0x00000000", operands: [first.operands[0]] };
+    raw.vt_queries = [first, second];
+
+    const [parsed] = parseTraceJsonl(JSON.stringify(raw));
+
+    expect(parsed.vt_queries).toEqual([
+      { ...first, rule: "visitAdd" },
+      { ...second, rule: "visitAdd" },
+    ]);
+    // The same pointer has different IR in the earlier new-value record.
+    expect(parsed.new_values[0].ir).toBe("%a = add i32 %x, 0");
+    expect(parsed.vt_queries[0].operands[0].ir).toBe("  %a = and i32 %x, 15");
+    expect(raw.vt_queries[0].rule).toBe("outdated runtime rule");
+  });
+
+  it("defaults ValueTracking queries to an empty array for older traces", () => {
+    const [parsed] = parseTraceJsonl(JSON.stringify(rawIteration()));
+
+    expect(parsed.vt_queries).toEqual([]);
+  });
+
+  it("keeps query-only iterations and derives missing rules", () => {
+    const query = rawQuery();
+    delete query.rule;
+    const raw: RawIteration = { iteration: 3, new_values: [], replacements: [], vt_queries: [query] };
+
+    const [parsed] = parseTraceJsonl(JSON.stringify(raw));
+
+    expect(parsed.iteration).toBe(3);
+    expect(parsed.new_values).toEqual([]);
+    expect(parsed.replacements).toEqual([]);
+    expect(parsed.vt_queries).toEqual([{ ...query, rule: "visitAdd" }]);
+  });
+
+  it("uses the query source as the innermost rule candidate", () => {
+    const query = rawQuery();
+    query.loc = "llvm/lib/Transforms/InstCombine/InstCombineAndOrXor.cpp:80";
+    query.func_name = "visitAnd";
+    const raw = { ...rawIteration(), vt_queries: [query] };
+
+    const [parsed] = parseTraceJsonl(JSON.stringify(raw));
+
+    expect(parsed.vt_queries[0].rule).toBe("visitAnd");
+  });
+
+  it("uses an empty query rule when no source or frame belongs to InstCombine", () => {
+    const query = { ...rawQuery(), frames: [] };
+    const raw = { ...rawIteration(), vt_queries: [query] };
+
+    const [parsed] = parseTraceJsonl(JSON.stringify(raw));
+
+    expect(parsed.vt_queries[0].rule).toBe("");
   });
 
   it.each(["", "\n  \n"])("returns no iterations for empty or blank input %j", (raw) => {
