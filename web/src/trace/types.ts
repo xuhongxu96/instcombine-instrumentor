@@ -30,10 +30,26 @@ export interface Replacement {
   new_opcode: string;
 }
 
+export interface VTOperand {
+  ptr: string;
+  ir: string;
+}
+
+export interface VTQuery {
+  query: string;
+  result: string;
+  loc: string;
+  func_name: string;
+  operands: VTOperand[];
+  rule: string;
+  frames: Frame[];
+}
+
 export interface Iteration {
   iteration: number;
   new_values: NewValue[];
   replacements: Replacement[];
+  vt_queries: VTQuery[];
 }
 
 // Records received from the runtime.
@@ -50,8 +66,14 @@ export interface RawReplacement
   new_opcode?: string;
 }
 
+export interface RawVTQuery extends Omit<VTQuery, "rule"> {
+  rule?: string;
+}
+
 export interface RawIteration {
   iteration: number;
   new_values: RawNewValue[];
   replacements: RawReplacement[];
+  // Older bundles predate ValueTracking records.
+  vt_queries?: RawVTQuery[];
 }
