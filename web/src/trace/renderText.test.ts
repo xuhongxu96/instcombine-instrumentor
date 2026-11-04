@@ -209,28 +209,20 @@ describe("renderTraceText", () => {
     expect(renderTraceText(parseTraceJsonl(JSON.stringify(raw)))).not.toContain("VALUETRACKING");
   });
 
-  it("returns empty text when neither structured nor legacy data exists", () => {
+  it("returns empty text when no structured records exist", () => {
     expect(renderTraceText([])).toBe("");
+    expect(renderTraceText(parseTraceJsonl(""))).toBe("");
   });
 
-  it("preserves legacy text verbatim when structured data is unavailable", () => {
-    const legacy = "=== SESSION START ===\nlegacy trace with café\n\n";
-
-    expect(renderTraceText(parseTraceJsonl(""), legacy)).toBe(legacy);
-  });
-
-  it("prefers structured records over conflicting runtime text", () => {
-    const data = [iteration()];
-
-    expect(renderTraceText(data, "outdated runtime text")).toBe(renderTraceText(data));
-  });
-
-  it("does not substitute legacy text for a valid empty iteration", () => {
+  it("renders a valid empty iteration", () => {
     const data = [{ iteration: 1, new_values: [], replacements: [], vt_queries: [] }];
 
-    const text = renderTraceText(data, "outdated runtime text");
-
-    expect(text).toContain("=== ITERATION 1 START ===");
-    expect(text).not.toContain("outdated runtime text");
+    expect(renderTraceText(data)).toBe(
+      "=== SESSION START ===\n" +
+      "=== ITERATION 1 START ===\n" +
+      "\nNEW INSTRUCTIONS IN THIS ITERATION:\n" +
+      "REPLACEMENTS IN THIS ITERATION:\n" +
+      "=== ITERATION END ===\n",
+    );
   });
 });
