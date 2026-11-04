@@ -150,7 +150,7 @@ self.onmessage = async (e: MessageEvent<IncomingMessage>) => {
       try { Module.FS.mkdir("/work"); } catch { /* already exists */ }
       Module.FS.chdir("/work");
       Module.FS.writeFile("/work/input.ll", msg.ir);
-      for (const f of ["/work/llvm_fuzz_info.txt", "/work/llvm_fuzz_info.json", "/work/output.ll"]) {
+      for (const f of ["/work/llvm_fuzz_info.json", "/work/output.ll"]) {
         try { Module.FS.unlink(f); } catch { /* not present */ }
       }
 
@@ -162,22 +162,16 @@ self.onmessage = async (e: MessageEvent<IncomingMessage>) => {
         Module.ccall("dump_iteration_info_external", null, [], []);
       } catch { /* runtime not in a flushable state */ }
 
-      let trace = "";
-      // Compatibility fallback for old bundles; current runtimes emit JSONL only.
-      try {
-        trace = Module.FS.readFile("/work/llvm_fuzz_info.txt", { encoding: "utf8" });
-      } catch { /* current runtimes do not emit a text file */ }
       let traceJson = "";
       try {
         traceJson = Module.FS.readFile("/work/llvm_fuzz_info.json", { encoding: "utf8" });
-      } catch { /* older bundle, no trace events, or driver bailed */ }
+      } catch { /* no trace events, or driver bailed */ }
       let outputIr = "";
       try {
         outputIr = Module.FS.readFile("/work/output.ll", { encoding: "utf8" });
       } catch { /* older wasm bundle won't emit /work/output.ll, or driver bailed */ }
       self.postMessage({
         type: "done",
-        trace,
         traceJson,
         outputIr,
         stderr: active.stderr.join("\n"),

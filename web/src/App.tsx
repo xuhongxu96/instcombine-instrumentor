@@ -170,7 +170,6 @@ export function App() {
   if (initialIrRef.current === null) initialIrRef.current = readInitialIr();
   const [ir, setIr] = useState(initialIrRef.current.value);
   const [isDecodingShared, setIsDecodingShared] = useState(initialIrRef.current.isDecoding);
-  const [legacyTrace, setLegacyTrace] = useState("");
   const [traceJson, setTraceJson] = useState("");
   const [outputIr, setOutputIr] = useState("");
   const [runError, setRunError] = useState("");
@@ -190,7 +189,7 @@ export function App() {
   const shouldAutoRunRef = useRef(initialIrRef.current?.fromShare ?? false);
 
   const iterations = useMemo(() => parseTraceJsonl(traceJson), [traceJson]);
-  const trace = useMemo(() => renderTraceText(iterations, legacyTrace), [iterations, legacyTrace]);
+  const trace = useMemo(() => renderTraceText(iterations), [iterations]);
   const traceBytes = useMemo(() => new TextEncoder().encode(trace).byteLength, [trace]);
 
   const releaseByTag = useMemo(() => {
@@ -307,7 +306,6 @@ export function App() {
       if (msg.type === "done") {
         const stderr: string = msg.stderr ?? "";
         const exitCode: number = msg.exitCode ?? 0;
-        setLegacyTrace(msg.trace ?? "");
         setTraceJson(msg.traceJson ?? "");
         setOutputIr(msg.outputIr ?? "");
         // The driver exits non-zero on failure (e.g. IR parse error); surface
@@ -400,7 +398,6 @@ export function App() {
     if (!workerRef.current) return;
     if (state.kind !== "ready" && state.kind !== "done" && state.kind !== "runError") return;
     setState({ kind: "running", tag: state.tag });
-    setLegacyTrace("");
     setTraceJson("");
     setOutputIr("");
     setRunError("");

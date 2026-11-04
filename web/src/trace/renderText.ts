@@ -1,9 +1,8 @@
 import type { Iteration } from "./types";
 
-// Both web views use normalized iterations. Fall back to runtime text only
-// when there are no usable structured records (for example, older bundles).
-export function renderTraceText(iterations: readonly Iteration[], legacyTrace = ""): string {
-  if (iterations.length === 0) return legacyTrace;
+// Both web views use the same normalized JSONL records.
+export function renderTraceText(iterations: readonly Iteration[]): string {
+  if (iterations.length === 0) return "";
 
   const lines = ["=== SESSION START ==="];
   for (const iteration of iterations) {
