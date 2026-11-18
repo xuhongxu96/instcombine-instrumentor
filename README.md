@@ -1,6 +1,13 @@
 # instcombine-instrumentor
 
-**Try it:** <https://xuhongxu.com/instcombine-instrumentor/>
+> **⚠️ This repository is deprecated.** It has been migrated to
+> **[xuhongxu96/llvm-observatory](https://github.com/xuhongxu96/llvm-observatory)**
+> (live: <https://xuhongxu.com/llvm-observatory/>), which gets stack traces and
+> coverage profiles directly from WebAssembly. All CI here is disabled
+> (old workflows are parked in `.github/workflows-disabled/`) and the old Pages
+> site now redirects to the new one. No further updates are planned.
+
+**Try it (now redirects):** <https://xuhongxu.com/instcombine-instrumentor/>
 
 ![demo](demo.png)
 
